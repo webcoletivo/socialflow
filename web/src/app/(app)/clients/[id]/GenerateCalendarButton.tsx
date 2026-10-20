@@ -9,15 +9,26 @@ import { MonthPicker, TimePicker } from "@/components/DatePickers";
 import { Dialog } from "@/components/Dialog";
 import { Field } from "@/components/Field";
 import { Popover } from "@/components/Popover";
+import { isPackageTier, packageSummary } from "@/lib/content-packages";
 import { toUserMessage } from "@/lib/user-facing-error";
-import CalendarReviewModal, { type PreviewPost } from "./CalendarReviewModal";
+import CalendarReviewModal, { type PreviewPackage, type PreviewPost } from "./CalendarReviewModal";
 
 type Preview = {
   month: string;
   clientName: string;
   activePlatforms: string[];
   posts: PreviewPost[];
+  packageInfo: PreviewPackage | null;
 };
+
+/** `package` da resposta de POST /api/ai/calendar (cliente com pacote de gestão). */
+function readPackage(data: unknown): PreviewPackage | null {
+  const p = (data as { package?: unknown } | null)?.package as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return null;
+  const { label, planned, generated } = p;
+  if (typeof label !== "string" || typeof planned !== "number" || typeof generated !== "number") return null;
+  return { label, planned, generated };
+}
 
 const GENERATE_ERROR = "Não foi possível gerar o cronograma agora. Tente de novo em instantes.";
 
@@ -52,7 +63,17 @@ function nextMonth() {
   return `${ny}-${String(nm).padStart(2, "0")}`;
 }
 
-export default function GenerateCalendarButton({ clientId }: { clientId: string }) {
+export default function GenerateCalendarButton({
+  clientId,
+  tier = "",
+  carouselFrequency = null,
+}: {
+  clientId: string;
+  /** pacote de gestão do cliente: com pacote, o sistema monta os slots e a IA só cria os temas */
+  tier?: string;
+  carouselFrequency?: string | null;
+}) {
+  const summary = isPackageTier(tier) ? packageSummary(tier, carouselFrequency) : null;
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -137,6 +158,7 @@ export default function GenerateCalendarButton({ clientId }: { clientId: string 
         clientName: typeof data?.clientName === "string" ? data.clientName : "",
         activePlatforms: Array.isArray(data?.activePlatforms) ? data.activePlatforms : [],
         posts: Array.isArray(data?.posts) ? data.posts : [],
+        packageInfo: readPackage(data),
       });
     } catch {
       setError("Falha de conexão ao gerar o cronograma. Verifique a internet e tente de novo.");
@@ -145,7 +167,13 @@ export default function GenerateCalendarButton({ clientId }: { clientId: string 
     }
   }
 
-  const intro = (
+  const intro = summary ? (
+    <>
+      Pacote <strong className="font-semibold text-fg">{summary}</strong>. O sistema monta as datas e os tipos do
+      mês; a IA cria o título e a explicação de cada postagem. As legendas são geradas em segundo plano enquanto
+      você revisa.
+    </>
+  ) : (
     <>
       A IA cria <strong className="font-semibold text-fg">12 postagens</strong> (título + explicação do tema) no tom
       de voz do cliente. O cliente aprova os temas no link mensal; as legendas são geradas em segundo plano
@@ -166,7 +194,8 @@ export default function GenerateCalendarButton({ clientId }: { clientId: string 
 
   const status = busy && (
     <p role="status" className="text-sm text-fg-muted">
-      Gerando os 12 posts com a IA. Isso leva de 30 s a 1 minuto…
+      {summary ? "Gerando o cronograma do pacote com a IA." : "Gerando os 12 posts com a IA."} Isso leva de 30 s a 1
+      minuto…
     </p>
   );
 
@@ -178,7 +207,7 @@ export default function GenerateCalendarButton({ clientId }: { clientId: string 
 
   const generateButton = (className?: string) => (
     <Button className={className} variant="primary" loading={busy} loadingText="Gerando…" onClick={generate}>
-      Gerar 12 posts
+      {summary ? "Gerar cronograma" : "Gerar 12 posts"}
     </Button>
   );
 
@@ -263,6 +292,7 @@ export default function GenerateCalendarButton({ clientId }: { clientId: string 
           month={preview.month}
           availablePlatforms={preview.activePlatforms}
           initialPosts={preview.posts}
+          packageInfo={preview.packageInfo}
           onClose={() => setPreview(null)}
           onCommitted={({ openCalendar }) => {
             const ref = preview.month;

@@ -1,16 +1,17 @@
 /**
- * F7-EMAIL: e-mail principal repetido só para cliente SEM aprovação — POST /api/clients e
- * PATCH /api/clients/[id].
- *   - sem aprovação: pode repetir o e-mail de qualquer outro cliente (ex.: o da agência) → 201/200;
- *   - com aprovação: e-mail de outro cliente COM aprovação (sem diferenciar maiúsculas) → 409
- *     { error: APPROVAL_EMAIL_TAKEN, field: "email" }, nada gravado;
- *   - com aprovação pode coincidir com o e-mail de um cliente sem aprovação;
- *   - PATCH trocando o plano sem → com em conflito → 409 e a transação é desfeita (nem o cliente
- *     nem os posts da fila mudam).
+ * F15-PACOTES (20/10): e-mail principal repetível em QUALQUER plano — POST /api/clients e
+ * PATCH /api/clients/[id]. O índice parcial uq_clients_email_aprovacao foi removido
+ * (system/migrations/2026-10-20-pacotes-gestao.sql): há clientes em que a aprovação vai para uma
+ * única pessoa (ex.: Mania de Passar), então dois clientes COM aprovação podem ter o mesmo e-mail.
+ *   - com aprovação + e-mail de outro cliente com aprovação (maiúsculas diferentes) → 201/200;
+ *   - sem aprovação continua podendo repetir (ex.: o e-mail da agência) → 201/200;
+ *   - trocar o plano sem → com aprovação com e-mail repetido → 200 (e "publica? → Não" ainda
+ *     devolve os posts da fila para draft na mesma transação).
+ * Também os campos do pacote de gestão no cadastro: tier novo (padrão gestao_1), frequência de
+ * carrossel e dia dos reels coerente com o pacote (sem reels → null; com reels sem dia → quarta).
  *
  * Técnica do posts-art.test.ts: hooks de módulo trocam Prisma e a sessão (@/auth) por versões
- * falsas em memória. O banco falso aplica a regra do índice parcial uq_clients_email_aprovacao
- * (lower(email) WHERE plan = 'aprovacao_cliente') e lança P2002 como o Prisma real.
+ * falsas em memória. O banco falso NÃO tem unicidade em e-mail (como o banco depois da migração).
  */
 import { beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -29,6 +30,8 @@ type ClientRow = {
   email: string;
   plan: string;
   tier: string;
+  carouselFrequency: string;
+  reelsWeekday: number | null;
   status: string;
   agencyPublishes: boolean;
   extraEmails: string[];
@@ -58,20 +61,6 @@ const state = {
 const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 let nextId = 100;
 
-/** Regra do índice parcial: lower(email) único entre os clientes com plan = 'aprovacao_cliente'. */
-function assertPartialIndex(row: ClientRow) {
-  if (row.plan !== "aprovacao_cliente") return;
-  const clash = state.clients.some(
-    (c) => !sameId(c.id, row.id) && c.plan === "aprovacao_cliente" && c.email.toLowerCase() === row.email.toLowerCase()
-  );
-  if (clash) {
-    throw new PrismaClientKnownRequestError(
-      'Unique constraint failed on the constraint: `uq_clients_email_aprovacao`',
-      { code: "P2002" }
-    );
-  }
-}
-
 function clientDelegate() {
   return {
     create: async (args: { data: Record<string, unknown> }) => {
@@ -82,12 +71,13 @@ function clientDelegate() {
         email: String(args.data.email),
         plan: (args.data.plan as string | undefined) ?? "sem_aprovacao",
         tier: (args.data.tier as string | undefined) ?? "completa",
+        carouselFrequency: (args.data.carouselFrequency as string | undefined) ?? "quinzenal",
+        reelsWeekday: (args.data.reelsWeekday as number | null | undefined) ?? null,
         status: (args.data.status as string | undefined) ?? "ativo",
         agencyPublishes: (args.data.agencyPublishes as boolean | undefined) ?? true,
         extraEmails: (args.data.extraEmails as string[] | undefined) ?? [],
         credentialsEnc: null,
       };
-      assertPartialIndex(row);
       state.clients.push(row);
       return { ...row };
     },
@@ -101,7 +91,6 @@ function clientDelegate() {
       const i = state.clients.findIndex((x) => sameId(x.id, args.where.id));
       if (i < 0) throw new PrismaClientKnownRequestError("Record not found", { code: "P2025" });
       const next = { ...state.clients[i], ...args.data } as ClientRow;
-      assertPartialIndex(next);
       state.clients[i] = next;
       return { ...next };
     },
@@ -149,9 +138,9 @@ console.error = (...args: unknown[]) => {
 
 const FAKE_MODULES: Record<string, string> = {
   "next/server": "export class NextRequest extends Request {} export class NextResponse extends Response {}",
-  "@/auth": "export const auth = async () => globalThis.__f7email.state.session;",
-  "@/lib/prisma": "export const prisma = globalThis.__f7email.prisma;",
-  "@/generated/prisma/client": "export const Prisma = globalThis.__f7email.Prisma;",
+  "@/auth": "export const auth = async () => globalThis.__f15email.state.session;",
+  "@/lib/prisma": "export const prisma = globalThis.__f15email.prisma;",
+  "@/generated/prisma/client": "export const Prisma = globalThis.__f15email.Prisma;",
   "@/lib/basic-plan": "export const scheduleAllBasicMonths = async () => ({ scheduled: 0 });",
 };
 type ResolveHook = (
@@ -161,7 +150,7 @@ type ResolveHook = (
 ) => unknown;
 const { registerHooks } = nodeModule as unknown as { registerHooks: (hooks: { resolve: ResolveHook }) => void };
 
-(globalThis as unknown as { __f7email: unknown }).__f7email = {
+(globalThis as unknown as { __f15email: unknown }).__f15email = {
   state,
   prisma: fakePrisma,
   Prisma: { PrismaClientKnownRequestError },
@@ -180,7 +169,7 @@ registerHooks({
 
 const { POST } = await import("../../src/app/api/clients/route.ts");
 const { PATCH } = await import("../../src/app/api/clients/[id]/route.ts");
-const { APPROVAL_EMAIL_TAKEN } = await import("../../src/lib/client-emails.ts");
+const clientEmails = await import("../../src/lib/client-emails.ts");
 
 // ------------------------------------------------------------ helpers
 
@@ -206,29 +195,31 @@ async function patch(id: string, body: Record<string, unknown>): Promise<Result>
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
 
-function assertTaken(r: Result) {
-  assert.equal(r.status, 409);
-  assert.deepEqual(r.json, { error: APPROVAL_EMAIL_TAKEN, field: "email" });
-  assert.doesNotMatch(String(r.json.error), /P20\d\d|Prisma|constraint|uq_|unique/i, "sem detalhe técnico (N-14)");
-}
-
 function row(id: string): ClientRow {
   const c = state.clients.find((x) => sameId(x.id, id));
   assert.ok(c, `cliente ${id} existe`);
   return c;
 }
 
-const COM_APROVACAO = uid(1); // ZZ QA F7 Com — com aprovação, e-mail próprio
-const SEM_AGENCIA = uid(2); // ZZ QA F7 Sem — sem aprovação, e-mail da agência
-const SEM_OUTRO = uid(3); // ZZ QA F7 Sem 2 — sem aprovação, e-mail do cliente "Com"
+const COM_APROVACAO = uid(1); // ZZ QA F15 Com — com aprovação, e-mail próprio
+const SEM_AGENCIA = uid(2); // ZZ QA F15 Sem — sem aprovação, e-mail da agência
+const SEM_OUTRO = uid(3); // ZZ QA F15 Sem 2 — sem aprovação, e-mail do cliente "Com"
 
 beforeEach(() => {
   state.session = { user: { id: uid(900), email: "zzqa.admin@example.com", role: "admin" } };
-  const base = { tier: "completa", status: "ativo", agencyPublishes: true, extraEmails: [], credentialsEnc: null };
+  const base = {
+    tier: "completa",
+    carouselFrequency: "quinzenal",
+    reelsWeekday: null,
+    status: "ativo",
+    agencyPublishes: true,
+    extraEmails: [],
+    credentialsEnc: null,
+  };
   state.clients = [
-    { ...base, id: COM_APROVACAO, name: "ZZ QA F7 Com", email: "zzqa.com@example.com", plan: "aprovacao_cliente" },
-    { ...base, id: SEM_AGENCIA, name: "ZZ QA F7 Sem", email: AGENCIA, plan: "sem_aprovacao" },
-    { ...base, id: SEM_OUTRO, name: "ZZ QA F7 Sem 2", email: "zzqa.com@example.com", plan: "sem_aprovacao" },
+    { ...base, id: COM_APROVACAO, name: "ZZ QA F15 Com", email: "zzqa.com@example.com", plan: "aprovacao_cliente" },
+    { ...base, id: SEM_AGENCIA, name: "ZZ QA F15 Sem", email: AGENCIA, plan: "sem_aprovacao" },
+    { ...base, id: SEM_OUTRO, name: "ZZ QA F15 Sem 2", email: "zzqa.com@example.com", plan: "sem_aprovacao" },
   ];
   state.posts = [
     { id: uid(51), clientId: SEM_OUTRO, status: "scheduled" },
@@ -238,73 +229,114 @@ beforeEach(() => {
   logs.length = 0;
 });
 
-// ------------------------------------------------------------ POST
+// ------------------------------------------------------------ e-mail repetido
 
-describe("POST /api/clients — e-mail principal e plano", () => {
+describe("POST /api/clients — e-mail principal repetível em qualquer plano", () => {
+  test("com aprovação e e-mail de outro cliente com aprovação (maiúsculas diferentes) → 201", async () => {
+    const r = await create({ name: "ZZ QA F15 Mania", email: "ZZQA.Com@Example.com", plan: "aprovacao_cliente" });
+    assert.equal(r.status, 201);
+    assert.equal(r.json.plan, "aprovacao_cliente");
+    assert.equal(state.clients.length, 4);
+    assert.equal(
+      state.clients.filter((c) => c.plan === "aprovacao_cliente" && c.email.toLowerCase() === "zzqa.com@example.com").length,
+      2,
+      "dois clientes com aprovação com o mesmo e-mail"
+    );
+  });
+
   test("sem aprovação com e-mail já usado por outro cliente (o da agência) → 201", async () => {
-    const r = await create({ name: "ZZ QA F7 Novo", email: AGENCIA, plan: "sem_aprovacao" });
+    const r = await create({ name: "ZZ QA F15 Novo", email: AGENCIA, plan: "sem_aprovacao" });
     assert.equal(r.status, 201);
     assert.equal(r.json.email, AGENCIA);
-    assert.equal(r.json.plan, "sem_aprovacao");
     assert.equal(state.clients.filter((c) => c.email === AGENCIA).length, 2);
   });
 
-  test("sem aprovação é o padrão: e-mail de um cliente COM aprovação, em maiúsculas → 201", async () => {
-    const r = await create({ name: "ZZ QA F7 Padrão", email: "ZZQA.COM@example.com" });
-    assert.equal(r.status, 201);
-    assert.equal(r.json.plan, "sem_aprovacao");
-    assert.equal(state.clients.length, 4);
-  });
-
-  test("com aprovação e e-mail de outro cliente com aprovação (maiúsculas diferentes) → 409 no campo email, nada criado", async () => {
-    const r = await create({ name: "ZZ QA F7 Conflito", email: "ZZQA.Com@Example.com", plan: "aprovacao_cliente" });
-    assertTaken(r);
-    assert.equal(state.clients.length, 3, "nenhum cliente novo");
-  });
-
-  test("com aprovação e e-mail usado só por clientes sem aprovação → 201", async () => {
-    const r = await create({ name: "ZZ QA F7 Com 2", email: AGENCIA, plan: "aprovacao_cliente" });
-    assert.equal(r.status, 201);
-    assert.equal(r.json.plan, "aprovacao_cliente");
+  test("a mensagem antiga de e-mail repetido não existe mais", () => {
+    assert.equal("APPROVAL_EMAIL_TAKEN" in clientEmails, false);
   });
 });
 
-// ------------------------------------------------------------ PATCH
-
-describe("PATCH /api/clients/[id] — e-mail principal e plano", () => {
-  test("sem aprovação trocando para um e-mail já usado (o da agência) → 200 e grava", async () => {
-    const r = await patch(SEM_OUTRO, { email: AGENCIA });
+describe("PATCH /api/clients/[id] — e-mail principal repetível em qualquer plano", () => {
+  test("trocar o plano sem → com aprovação com e-mail de outro com aprovação → 200, e 'publica? → Não' reverte a fila", async () => {
+    const r = await patch(SEM_OUTRO, { plan: "aprovacao_cliente", agencyPublishes: false });
     assert.equal(r.status, 200);
-    assert.equal(r.json.email, AGENCIA);
-    assert.equal(row(SEM_OUTRO).email, AGENCIA);
-    assert.equal(state.clients.filter((c) => c.email === AGENCIA).length, 2);
-  });
-
-  test("trocar o plano sem → com aprovação com e-mail de outro com aprovação → 409 e nada gravado", async () => {
-    const before = structuredClone(state.clients);
-    // junto com "publica? → Não": se gravasse, os posts da fila voltariam para draft
-    const r = await patch(SEM_OUTRO, { plan: "aprovacao_cliente", name: "ZZ QA F7 Renomeado", agencyPublishes: false });
-    assertTaken(r);
-    assert.deepEqual(state.clients, before, "cliente intacto (plano, nome e publica)");
+    assert.equal(row(SEM_OUTRO).plan, "aprovacao_cliente");
+    assert.equal(r.json.revertedToDraft, 2);
     assert.deepEqual(
       state.posts.map((p) => p.status),
-      ["scheduled", "failed"],
-      "posts da fila intactos"
+      ["draft", "draft"]
     );
-    assert.ok(!state.calls.includes("post.updateMany"), "não chegou a mexer nos posts");
   });
 
-  test("com aprovação trocando para o e-mail de outro com aprovação → 409", async () => {
-    const r1 = await create({ name: "ZZ QA F7 Com 3", email: "zzqa.com3@example.com", plan: "aprovacao_cliente" });
+  test("com aprovação trocando para o e-mail de outro com aprovação → 200 e grava", async () => {
+    const r1 = await create({ name: "ZZ QA F15 Com 3", email: "zzqa.com3@example.com", plan: "aprovacao_cliente" });
     assert.equal(r1.status, 201);
     const r = await patch(String(r1.json.id), { email: "zzqa.com@example.com" });
-    assertTaken(r);
-    assert.equal(row(String(r1.json.id)).email, "zzqa.com3@example.com");
+    assert.equal(r.status, 200);
+    assert.equal(row(String(r1.json.id)).email, "zzqa.com@example.com");
+  });
+});
+
+// ------------------------------------------------------------ pacote de gestão no cadastro
+
+describe("POST /api/clients — pacote de gestão", () => {
+  test("sem tier → Gestão 1, carrossel quinzenal, sem dia de reels", async () => {
+    const r = await create({ name: "ZZ QA F15 G1", email: "zzqa.g1@example.com" });
+    assert.equal(r.status, 201);
+    assert.equal(r.json.tier, "gestao_1");
+    assert.equal(r.json.carouselFrequency, "quinzenal");
+    assert.equal(r.json.reelsWeekday, null);
   });
 
-  test("trocar o plano sem → com aprovação com e-mail livre entre os com aprovação → 200", async () => {
-    const r = await patch(SEM_AGENCIA, { plan: "aprovacao_cliente" });
+  test("Gestão 1 com dia de reels → gravado como null (pacote sem reels)", async () => {
+    const r = await create({ name: "ZZ QA F15 G1b", email: "zzqa.g1@example.com", tier: "gestao_1", reelsWeekday: 2, carouselFrequency: "semanal" });
+    assert.equal(r.status, 201);
+    assert.equal(r.json.reelsWeekday, null);
+    assert.equal(r.json.carouselFrequency, "semanal");
+  });
+
+  test("Gestão 2 sem dia → quarta (3); Gestão Reels com sexta → 5", async () => {
+    const a = await create({ name: "ZZ QA F15 G2", email: "zzqa.g2@example.com", tier: "gestao_2" });
+    assert.equal(a.status, 201);
+    assert.equal(a.json.reelsWeekday, 3);
+    const b = await create({ name: "ZZ QA F15 GR", email: "zzqa.gr@example.com", tier: "gestao_reels", reelsWeekday: 5 });
+    assert.equal(b.status, 201);
+    assert.equal(b.json.reelsWeekday, 5);
+  });
+
+  test("tier, frequência ou dia inválidos → 400, nada criado", async () => {
+    for (const extra of [{ tier: "premium" }, { carouselFrequency: "mensal" }, { tier: "gestao_2", reelsWeekday: 6 }]) {
+      const r = await create({ name: "ZZ QA F15 X", email: "zzqa.x@example.com", ...extra });
+      assert.equal(r.status, 400, JSON.stringify(extra));
+    }
+    assert.equal(state.clients.length, 3);
+  });
+});
+
+describe("PATCH /api/clients/[id] — pacote de gestão", () => {
+  test("completa (antigo) → Gestão 3 (Stories) com terça: grava tier e dia", async () => {
+    const r = await patch(COM_APROVACAO, { tier: "gestao_3_stories", reelsWeekday: 2 });
     assert.equal(r.status, 200);
-    assert.equal(row(SEM_AGENCIA).plan, "aprovacao_cliente");
+    assert.equal(row(COM_APROVACAO).tier, "gestao_3_stories");
+    assert.equal(row(COM_APROVACAO).reelsWeekday, 2);
+  });
+
+  test("trocar para Básica limpa o dia dos reels; mandar só o dia num pacote sem reels também fica null", async () => {
+    await patch(COM_APROVACAO, { tier: "gestao_reels", reelsWeekday: 4 });
+    assert.equal(row(COM_APROVACAO).reelsWeekday, 4);
+    const r = await patch(COM_APROVACAO, { tier: "basica" });
+    assert.equal(r.status, 200);
+    assert.equal(row(COM_APROVACAO).reelsWeekday, null);
+    await patch(COM_APROVACAO, { tier: "gestao_1" });
+    const r2 = await patch(COM_APROVACAO, { reelsWeekday: 1 });
+    assert.equal(r2.status, 200);
+    assert.equal(row(COM_APROVACAO).reelsWeekday, null);
+  });
+
+  test("salvar um cliente 'completa' sem mudar o tier continua aceito (cadastro antigo)", async () => {
+    const r = await patch(SEM_AGENCIA, { tier: "completa", name: "ZZ QA F15 Sem (renomeado)" });
+    assert.equal(r.status, 200);
+    assert.equal(row(SEM_AGENCIA).tier, "completa");
+    assert.equal(row(SEM_AGENCIA).reelsWeekday, null);
   });
 });

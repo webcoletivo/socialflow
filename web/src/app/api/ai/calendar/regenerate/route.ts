@@ -9,6 +9,7 @@ import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 import { enforceAiQuota } from "@/lib/ai-quota";
 import { readJsonLimited } from "@/lib/read-json";
 import { toUserMessage } from "@/lib/user-facing-error";
+import { CONTENT_KIND, CONTENT_KINDS } from "@/lib/content-packages";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,8 @@ const schema = z.object({
   targets: z.array(z.enum(["instagram", "facebook", "linkedin"])).min(1),
   // temas já presentes no calendário, para a IA não repetir
   avoid: z.array(z.string().max(400)).max(200).optional(),
+  // slot do pacote de gestão: a ideia nova é para este tipo (o formato não muda)
+  contentKind: z.enum(CONTENT_KINDS).nullable().optional(),
 });
 
 type Idea = {
@@ -47,7 +50,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { clientId, avoid = [] } = parsed.data;
+  const { clientId, avoid = [], contentKind } = parsed.data;
+  const kind = contentKind ? CONTENT_KIND[contentKind] : null;
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },
@@ -73,7 +77,9 @@ export async function POST(req: NextRequest) {
     "Gere EXATAMENTE 1 nova ideia de post, com um ângulo diferente e criativo. ",
     avoidLine,
     "Forneça: theme (título curto e forte, pronto para ser o título da postagem), ",
-    "format (um de: 'feed', 'carrossel', 'reels') ",
+    kind
+      ? `O post é um ${kind.prompt}: a ideia precisa servir para esse tipo. `
+      : "format (um de: 'feed', 'carrossel', 'reels') ",
     "e explanation (1-2 frases explicando ao CLIENTE o que a postagem vai abordar e por quê). ",
     "Tudo em pt-BR, no tom do cliente. ",
     'Responda em JSON no formato: {"theme":"...","format":"...","explanation":"..."}.',
@@ -108,7 +114,8 @@ export async function POST(req: NextRequest) {
   return Response.json(
     {
       theme: (idea.theme ?? "Novo post").slice(0, 200),
-      format: idea.format ?? "feed",
+      // slot de pacote: o formato é o do tipo, nunca o que a IA sugerir
+      format: kind ? kind.format : (idea.format ?? "feed"),
       explanation:
         typeof idea.explanation === "string" ? idea.explanation.trim().slice(0, 600) : "",
       captions: {},

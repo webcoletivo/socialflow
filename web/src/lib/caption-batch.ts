@@ -1,4 +1,5 @@
 import { parseModelJson } from "@/lib/gemini";
+import { CONTENT_KIND, isContentKind } from "@/lib/content-packages";
 import { briefingForPrompt } from "@/lib/client-briefing-prompt";
 import { clientHashtagBlock, hashtagPromptRule, withClientHashtags } from "@/lib/client-hashtags";
 
@@ -24,6 +25,8 @@ export type CaptionBatchItem = {
   explanation: string | null;
   /** feed | story | carrossel | reels — carrossel/reels também pedem slides */
   format: string;
+  /** tipo do conteúdo no pacote de gestão (lib/content-packages), quando houver */
+  contentKind?: string | null;
 };
 
 export type CaptionBatchEntry = {
@@ -52,7 +55,8 @@ export function buildCaptionBatchPrompt(
 
   const itemsDesc = items
     .map((p, i) => {
-      return `${i + 1}. id="${p.id}" formato=${p.format} título="${p.theme ?? ""}"${
+      const kind = isContentKind(p.contentKind) ? ` tipo="${CONTENT_KIND[p.contentKind].prompt}"` : "";
+      return `${i + 1}. id="${p.id}" formato=${p.format}${kind} título="${p.theme ?? ""}"${
         p.explanation ? ` briefing="${p.explanation}"` : ""
       }${wantsSlides(p.format) ? " (gerar slides)" : ""}`;
     })

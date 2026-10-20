@@ -43,6 +43,8 @@ export type DesignRow = {
   id: string;
   theme: string | null;
   format: string;
+  /** tipo do conteúdo no pacote de gestão (posts.content_kind) */
+  contentKind?: string;
   /** ISO */
   scheduledAt: string;
   status: string;

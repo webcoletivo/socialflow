@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
-import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api-auth";
 import { scheduleAllBasicMonths } from "@/lib/basic-plan";
-import { APPROVAL_EMAIL_TAKEN, normalizeExtraEmails } from "@/lib/client-emails";
+import { normalizeExtraEmails } from "@/lib/client-emails";
 import { CLIENT_DETAIL_FIELDS, CLIENT_LIST_SELECT, withoutSecrets } from "@/lib/client-select";
 import { normalizeClientUrlFields } from "@/lib/client-urls";
 import { NO_STORE } from "@/lib/permissions";
-import { CLIENT_STATUSES, SEGMENTS } from "@/lib/status-meta";
+import { CLIENT_STATUSES, SEGMENTS, TIERS } from "@/lib/status-meta";
+import { CAROUSEL_FREQUENCIES, normalizePackageFields } from "@/lib/content-packages";
 import { uuidString } from "@/lib/validators";
 import { z } from "zod";
 
@@ -17,7 +17,12 @@ const createSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   plan: z.enum(["sem_aprovacao", "aprovacao_cliente"]).default("sem_aprovacao"),
-  tier: z.enum(["basica", "completa"]).default("completa"),
+  // pacote de gestão (lib/content-packages); "completa" = antigo, ainda aceito
+  tier: z.enum(TIERS, { error: "Pacote de gestão inválido." }).default("gestao_1"),
+  // pacote com carrossel: 1 por semana ou 1 a cada 15 dias
+  carouselFrequency: z.enum(CAROUSEL_FREQUENCIES, { error: "Frequência de carrossel inválida." }).optional(),
+  // pacote com reels: 1–5 = seg–sex (sem reels → gravado como null)
+  reelsWeekday: z.number().int().min(1).max(5).nullable().optional(),
   toneOfVoice: z.string().optional(),
   driveFolderId: z.string().optional(),
   // campos da gestão básica (marca + contatos usados na arte gerada por IA)
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { extraEmails, responsibleUserId, designerUserId, ...rest } = parsed.data;
+  const { extraEmails, responsibleUserId, designerUserId, reelsWeekday, ...rest } = parsed.data;
 
   const badUrl = normalizeClientUrlFields(rest);
   if (badUrl) return Response.json({ error: badUrl.error, field: badUrl.field }, { status: 400 });
@@ -90,38 +95,31 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Designer não encontrado.", field: "designerUserId" }, { status: 400 });
   }
 
-  try {
-    const client = await prisma.client.create({
-      data: {
-        ...rest,
-        extraEmails: extras,
-        ...(responsibleUserId !== undefined ? { responsibleUserId } : {}),
-        ...(designerUserId !== undefined ? { designerUserId } : {}),
-        // nasce com status diferente do padrão: a mudança é registrada agora
-        ...(rest.status !== "ativo" ? { statusChangedAt: new Date() } : {}),
-      },
-      select: CLIENT_DETAIL_FIELDS,
-    });
+  const client = await prisma.client.create({
+    data: {
+      ...rest,
+      // dia dos reels coerente com o pacote (sem reels → null; com reels e sem dia → quarta)
+      ...normalizePackageFields(rest.tier, reelsWeekday),
+      extraEmails: extras,
+      ...(responsibleUserId !== undefined ? { responsibleUserId } : {}),
+      ...(designerUserId !== undefined ? { designerUserId } : {}),
+      // nasce com status diferente do padrão: a mudança é registrada agora
+      ...(rest.status !== "ativo" ? { statusChangedAt: new Date() } : {}),
+    },
+    select: CLIENT_DETAIL_FIELDS,
+  });
 
-    // cliente básico: agenda na hora o calendário de artes básicas de todos os
-    // meses disponíveis (posts draft sem arte — as imagens ficam pendentes)
-    let basicPlan: { scheduled: number } | null = null;
-    if (client.tier === "basica") {
-      try {
-        const r = await scheduleAllBasicMonths(client.id);
-        basicPlan = { scheduled: r.scheduled };
-      } catch {
-        basicPlan = null; // não bloqueia o cadastro; dá pra agendar depois na página do cliente
-      }
+  // cliente básico: agenda na hora o calendário de artes básicas de todos os
+  // meses disponíveis (posts draft sem arte — as imagens ficam pendentes)
+  let basicPlan: { scheduled: number } | null = null;
+  if (client.tier === "basica") {
+    try {
+      const r = await scheduleAllBasicMonths(client.id);
+      basicPlan = { scheduled: r.scheduled };
+    } catch {
+      basicPlan = null; // não bloqueia o cadastro; dá pra agendar depois na página do cliente
     }
-
-    return Response.json({ ...withoutSecrets(client), basicPlan }, { status: 201, headers: NO_STORE });
-  } catch (e) {
-    // único índice único de clients além do id: uq_clients_email_aprovacao (e-mail repetido entre
-    // clientes COM aprovação; sem aprovação pode repetir — migração 2026-10-07)
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return Response.json({ error: APPROVAL_EMAIL_TAKEN, field: "email" }, { status: 409 });
-    }
-    throw e;
   }
+
+  return Response.json({ ...withoutSecrets(client), basicPlan }, { status: 201, headers: NO_STORE });
 }

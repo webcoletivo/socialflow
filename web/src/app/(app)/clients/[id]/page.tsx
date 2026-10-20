@@ -66,7 +66,7 @@ export default async function ClientDetailPage({ params }: Props) {
           where: { scheduledAt: { gte: todayStart } },
           take: UPCOMING_TAKE,
           orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
-          select: { id: true, theme: true, format: true, targets: true, scheduledAt: true, status: true },
+          select: { id: true, theme: true, format: true, contentKind: true, targets: true, scheduledAt: true, status: true },
         },
         responsible: { select: { id: true, name: true } },
         designer: { select: { id: true, name: true } },
@@ -159,7 +159,11 @@ export default async function ClientDetailPage({ params }: Props) {
         action={
           <>
             <SyncMediaButton clientId={client.id} />
-            <GenerateCalendarButton clientId={client.id} />
+            <GenerateCalendarButton
+              clientId={client.id}
+              tier={client.tier}
+              carouselFrequency={client.carouselFrequency}
+            />
             <Link href={`/clients/${client.id}/importar`} className={buttonClasses({ variant: "secondary" })}>
               <span aria-hidden="true" className="inline-flex size-4.5 [&>svg]:size-full">
                 <Icon.fileText />
@@ -202,6 +206,8 @@ export default async function ClientDetailPage({ params }: Props) {
               extraEmails: client.extraEmails,
               plan: client.plan,
               tier: client.tier,
+              carouselFrequency: client.carouselFrequency,
+              reelsWeekday: client.reelsWeekday,
               agencyPublishes: client.agencyPublishes,
               status: client.status,
               segment: client.segment,
@@ -300,7 +306,7 @@ export default async function ClientDetailPage({ params }: Props) {
                       {post.theme?.trim() || "Sem tema"}
                     </Link>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <FormatBadge format={post.format} />
+                      <FormatBadge format={post.format} kind={post.contentKind} />
                       <span className="flex gap-1">
                         {post.targets.map((t) => (
                           <PlatformChip key={t} platform={t} />

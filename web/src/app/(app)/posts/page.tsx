@@ -299,7 +299,7 @@ export default async function PostsPage({
                         <td className="max-w-xs px-4 py-2 align-middle">
                           {/* formato ao lado do tema: feed e story do mesmo tema não parecem duplicados (U-03) */}
                           <div className="flex items-center gap-2">
-                            <FormatBadge format={post.format} />
+                            <FormatBadge format={post.format} kind={post.contentKind} />
                             <Link
                               href={`/posts/${post.id}`}
                               title={post.theme ?? undefined}
@@ -371,7 +371,7 @@ export default async function PostsPage({
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <FormatBadge format={post.format} />
+                          <FormatBadge format={post.format} kind={post.contentKind} />
                           <Link
                             href={`/posts/${post.id}`}
                             title={post.theme ?? undefined}

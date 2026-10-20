@@ -59,8 +59,7 @@ export function NavLinks({
         key={item.href}
         href={item.href}
         aria-current={active ? "page" : undefined}
-        // nome acessível com a contagem: "Design, 5 a fazer" (o selo é só visual)
-        aria-label={count > 0 ? `${item.label}, ${count} a fazer` : undefined}
+        // nome acessível vem do conteúdo: "Design, 5 a fazer" (texto visível + complemento sr-only; WCAG 2.5.3)
         onClick={onNavigate}
         className={`flex items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-(--sf-dur-fast) ${
           variant === "drawer" ? "h-11" : "h-10"
@@ -68,14 +67,15 @@ export function NavLinks({
       >
         <ItemIcon className="size-4.5 shrink-0" />
         <span className="truncate">{item.label}</span>
+        {count > 0 && <span className="sr-only">, </span>}
         {count > 0 && (
           <span
-            aria-hidden="true"
             className={`ml-auto inline-grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1.5 text-xs font-semibold tabular-nums leading-none ${
               active ? "bg-surface text-fg" : "bg-brand text-on-brand"
             }`}
           >
             {count > 99 ? "99+" : count}
+            <span className="sr-only"> a fazer</span>
           </span>
         )}
       </Link>

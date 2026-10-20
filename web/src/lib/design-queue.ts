@@ -62,6 +62,8 @@ export type DesignQueueItem = {
   theme: string | null;
   /** feed | story | carrossel | reels */
   format: string;
+  /** tipo do conteúdo no pacote de gestão (posts.content_kind); ausente = sem tipo */
+  contentKind?: string;
   scheduledAt: Date;
   /** status do post: draft | scheduled | publishing | failed (published nunca entra) */
   status: string;
@@ -195,6 +197,7 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
       clientId: true,
       theme: true,
       format: true,
+      contentKind: true,
       scheduledAt: true,
       status: true,
       caption: true,
@@ -231,6 +234,7 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
       id: p.id,
       theme: p.theme,
       format: p.format,
+      ...(p.contentKind ? { contentKind: p.contentKind } : {}),
       scheduledAt: p.scheduledAt,
       status: p.status,
       client: { id: client.id, name: client.name },

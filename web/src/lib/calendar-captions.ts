@@ -41,6 +41,8 @@ export type CaptionItem = {
   theme: string;
   explanation?: string | null;
   format: string;
+  /** tipo do conteúdo no pacote de gestão (ex.: reels_banco), quando houver */
+  contentKind?: string | null;
   targets: string[];
 };
 /** Legenda por rede (só as redes do post) e, para carrossel/reels, o roteiro por tela. */
@@ -85,6 +87,7 @@ export async function generateCaptionBatch(
     theme: p.theme,
     explanation: text(p.explanation) || null,
     format: p.format,
+    contentKind: p.contentKind ?? null,
   }));
   const { system, prompt } = buildCaptionBatchPrompt(client, batchItems);
   const raw = await generateAiText("calendar", {
@@ -126,6 +129,7 @@ type FillPost = {
   theme: string | null;
   explanation: string | null;
   format: string;
+  contentKind: string | null;
   targets: string[];
   captions: unknown;
   slides: unknown;
@@ -214,7 +218,7 @@ export async function fillMissingCaptions(
   const posts: FillPost[] = await prisma.post.findMany({
     where: { id: { in: postIds } },
     select: {
-      id: true, clientId: true, theme: true, explanation: true, format: true, targets: true,
+      id: true, clientId: true, theme: true, explanation: true, format: true, contentKind: true, targets: true,
       captions: true, slides: true, scheduledAt: true,
     },
     orderBy: { scheduledAt: "asc" },
@@ -252,6 +256,7 @@ export async function fillMissingCaptions(
           theme: text(p.theme),
           explanation: p.explanation,
           format: p.format,
+          contentKind: p.contentKind,
           targets: p.targets,
         }))
       );

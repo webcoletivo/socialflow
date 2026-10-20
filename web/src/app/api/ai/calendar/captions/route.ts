@@ -7,6 +7,7 @@ import { enforceAiQuota } from "@/lib/ai-quota";
 import { readJsonLimited } from "@/lib/read-json";
 import { toUserMessage } from "@/lib/user-facing-error";
 import { CAPTION_BATCH_MAX, generateCaptionBatch } from "@/lib/calendar-captions";
+import { CONTENT_KINDS } from "@/lib/content-packages";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,8 @@ const postSchema = z.object({
   theme: z.string().trim().min(1).max(200),
   explanation: z.string().max(600).optional(),
   format: z.enum(["feed", "story", "carrossel", "reels"]).default("feed"),
+  // tipo do slot do pacote de gestão (vai no prompt: reels gravado, banner animado…)
+  contentKind: z.enum(CONTENT_KINDS).nullable().optional(),
   targets: z.array(z.enum(["instagram", "facebook", "linkedin"])).min(1).max(3),
 });
 

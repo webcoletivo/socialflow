@@ -54,6 +54,7 @@ function toRow(item: DesignQueueResult["items"][number]): DesignRow {
     id: item.id,
     theme: item.theme,
     format: item.format,
+    ...(item.contentKind ? { contentKind: item.contentKind } : {}),
     scheduledAt: item.scheduledAt.toISOString(),
     status: item.status,
     client: item.client,

@@ -179,7 +179,7 @@ export default async function PostDetailPage({ params, searchParams }: Props) {
         badges={
           <>
             <StatusBadge status={post.status} size="md" />
-            <FormatBadge format={post.format} size="md" />
+            <FormatBadge format={post.format} kind={post.contentKind} size="md" />
           </>
         }
         action={

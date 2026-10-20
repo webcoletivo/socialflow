@@ -13,6 +13,7 @@ import { MediaField } from "@/components/MediaField";
 import { SlidesEditor } from "@/components/SlidesEditor";
 import { FormatBadge, ToneBadge } from "@/components/ui";
 import { createCaptionDispatcher, type CaptionDispatcher } from "@/lib/caption-dispatcher";
+import { describeFeedCounts, isContentKind, kindForFormat } from "@/lib/content-packages";
 import { buildMonthFileNames, canonicalMonthFolderName, parseMonthKey, type MonthFileName } from "@/lib/drive-layout";
 import { FORMAT_OPTIONS } from "@/lib/formats";
 import { formatMonthLabel, spLocalInputFromISO, spLocalInputToISO } from "@/lib/format-date";
@@ -26,6 +27,19 @@ export type PreviewPost = {
   scheduledAt: string; // ISO
   targets: string[];
   mediaUrl: string;
+  /** slot do pacote de gestão (lib/content-packages): tipo do conteúdo */
+  contentKind?: string | null;
+  /** slot do pacote: story junto? (story exclusivo não tem) — sem isso, todo post não-story tem */
+  withStory?: boolean;
+};
+
+/** Pacote de gestão do cronograma gerado (POST /api/ai/calendar → `package`). */
+export type PreviewPackage = {
+  label: string;
+  /** postagens que o mês inteiro teria */
+  planned: number;
+  /** postagens geradas (mês já começado: só as dos dias que faltam) */
+  generated: number;
 };
 
 type ReviewPost = {
@@ -41,6 +55,8 @@ type ReviewPost = {
   mediaUrl: string;
   // story sai junto do post (15 min depois, arte própria "Nstory.*")
   withStory: boolean;
+  // tipo do conteúdo no pacote de gestão (posts.content_kind); null = sem tipo
+  contentKind: string | null;
 };
 
 /** Post já salvo do cliente: entra na numeração das artes do mês, como no sync. */
@@ -91,6 +107,35 @@ const captionInputKey = (p: ReviewPost) => JSON.stringify([p.theme.trim(), p.exp
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/**
+ * Resumo do pacote pelas postagens da revisão (muda com as edições):
+ * "Gestão 2 · 12 posts: 3 reels, 1 banner, 2 carrosséis, 6 estáticos" (+ stories na Gestão 3).
+ */
+function packageSummaryOf(label: string, posts: ReviewPost[]): string {
+  const counts: Record<string, number> = {};
+  let feed = 0;
+  let replicas = 0;
+  let exclusive = 0;
+  let other = 0;
+  for (const p of posts) {
+    if (p.format === "story") {
+      if (p.contentKind === "story_exclusivo") exclusive++;
+      else other++;
+      continue;
+    }
+    feed++;
+    if (p.withStory) replicas++;
+    if (p.contentKind) counts[p.contentKind] = (counts[p.contentKind] ?? 0) + 1;
+  }
+  const kinds = describeFeedCounts(counts);
+  let text = `${label} · ${feed} ${plural(feed, "post", "posts")}${kinds ? `: ${kinds}` : ""}`;
+  if (exclusive > 0) {
+    const stories = replicas + exclusive + other;
+    text += ` + ${stories} ${plural(stories, "story", "stories")} (${replicas} ${plural(replicas, "réplica", "réplicas")}, ${exclusive} ${plural(exclusive, "exclusivo", "exclusivos")})`;
+  }
+  return text;
+}
 
 /** Instante (ms) de um "YYYY-MM-DDTHH:MM" lido como horário de São Paulo; null se inválido. */
 function spLocalToMs(local: string): number | null {
@@ -171,6 +216,7 @@ export default function CalendarReviewModal({
   month,
   availablePlatforms,
   initialPosts,
+  packageInfo = null,
   onClose,
   onCommitted,
 }: {
@@ -179,6 +225,8 @@ export default function CalendarReviewModal({
   month: string; // YYYY-MM
   availablePlatforms: string[];
   initialPosts: PreviewPost[];
+  /** cliente com pacote de gestão: resumo e aviso de mês já começado */
+  packageInfo?: PreviewPackage | null;
   /** descartar a revisão (nada foi salvo) */
   onClose: () => void;
   /** o cronograma foi salvo; `openCalendar` = ir para o calendário do mês */
@@ -200,7 +248,8 @@ export default function CalendarReviewModal({
         scheduledLocal: spLocalInputFromISO(p.scheduledAt),
         targets: p.targets,
         mediaUrl: p.mediaUrl ?? "",
-        withStory: format !== "story",
+        withStory: format !== "story" && p.withStory !== false,
+        contentKind: isContentKind(p.contentKind) ? p.contentKind : null,
       };
     })
   );
@@ -318,6 +367,7 @@ export default function CalendarReviewModal({
             theme: p.theme.trim().slice(0, 200),
             explanation: p.explanation.trim().slice(0, 600) || undefined,
             format: p.format,
+            ...(p.contentKind ? { contentKind: p.contentKind } : {}),
             targets: p.targets,
           })),
         }),
@@ -550,7 +600,12 @@ export default function CalendarReviewModal({
       const res = await fetch("/api/ai/calendar/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId, targets: post.targets, avoid }),
+        body: JSON.stringify({
+          clientId,
+          targets: post.targets,
+          avoid,
+          ...(post.contentKind ? { contentKind: post.contentKind } : {}),
+        }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -562,7 +617,8 @@ export default function CalendarReviewModal({
       setLiDirty((d) => ({ ...d, [uid]: false }));
       update(uid, {
         theme,
-        format: typeof data?.format === "string" ? data.format : post.format,
+        // slot do pacote: o formato e o tipo continuam os do slot
+        format: post.contentKind ? post.format : typeof data?.format === "string" ? data.format : post.format,
         explanation: typeof data?.explanation === "string" ? data.explanation : "",
         captions: {},
         slides: [],
@@ -613,6 +669,7 @@ export default function CalendarReviewModal({
       targets: platforms,
       mediaUrl: "",
       withStory: true,
+      contentKind: null,
     };
     setEdited(true);
     changePosts((prev) => [...prev, fresh]);
@@ -668,13 +725,21 @@ export default function CalendarReviewModal({
             {
               ...base,
               format: p.format,
+              ...(p.contentKind ? { contentKind: p.contentKind } : {}),
               scheduledAt: baseIso,
               ...(slides.length && (p.format === "carrossel" || p.format === "reels") ? { slides } : {}),
             },
           ];
           if (p.withStory && p.format !== "story") {
             const storyIso = new Date(new Date(baseIso).getTime() + STORY_DELAY_MS).toISOString();
-            out.push({ ...base, format: "story", mediaUrl: "", scheduledAt: storyIso });
+            out.push({
+              ...base,
+              format: "story",
+              // pacote de gestão: o story junto é a réplica do post do feed
+              ...(p.contentKind ? { contentKind: "story_replica" } : {}),
+              mediaUrl: "",
+              scheduledAt: storyIso,
+            });
           }
           return out;
         }),
@@ -805,6 +870,17 @@ export default function CalendarReviewModal({
           os posts do mês.
         </Callout>
 
+        {packageInfo && (
+          <div className="grid gap-1 rounded-card border border-line bg-sunken p-3 text-sm">
+            <p className="font-semibold text-fg">{packageSummaryOf(packageInfo.label, posts)}</p>
+            <p className="text-fg-muted">
+              Datas, horários e tipos seguem o pacote do cliente; a IA criou só o título e a explicação de cada um.
+              {packageInfo.generated < packageInfo.planned &&
+                ` O mês já começou: ${packageInfo.generated} de ${packageInfo.planned} postagens do pacote (os dias que já passaram ficaram de fora).`}
+            </p>
+          </div>
+        )}
+
         {posts.length > 0 && (
           <p
             ref={captionSummaryRef}
@@ -872,7 +948,7 @@ export default function CalendarReviewModal({
                     <span className="sr-only">Postagem </span>
                     {number}
                   </span>
-                  <FormatBadge format={p.format} />
+                  <FormatBadge format={p.format} kind={p.contentKind} />
                   <ToneBadge tone={hasArt ? "success" : "warning"}>{hasArt ? "Com arte" : "Sem arte"}</ToneBadge>
                   {status === "pending" ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-fg-muted">
@@ -957,6 +1033,8 @@ export default function CalendarReviewModal({
                           update(p.uid, {
                             format: e.target.value,
                             ...(e.target.value === "story" ? { withStory: false } : {}),
+                            // slot do pacote: o tipo acompanha o formato novo
+                            ...(p.contentKind ? { contentKind: kindForFormat(p.contentKind, e.target.value) } : {}),
                           })
                         }
                       >

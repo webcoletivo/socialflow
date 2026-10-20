@@ -2,12 +2,13 @@ import { NextRequest } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api-auth";
-import { APPROVAL_EMAIL_TAKEN, normalizeEmail, normalizeExtraEmails } from "@/lib/client-emails";
+import { normalizeEmail, normalizeExtraEmails } from "@/lib/client-emails";
+import { CAROUSEL_FREQUENCIES, normalizePackageFields } from "@/lib/content-packages";
 import { CLIENT_DETAIL_FIELDS, withoutSecrets } from "@/lib/client-select";
 import { normalizeClientUrlFields } from "@/lib/client-urls";
 import { audit } from "@/lib/audit";
 import { ADMIN_ONLY, NO_STORE, requireAdminFor, sessionActor } from "@/lib/permissions";
-import { CLIENT_STATUSES, SEGMENTS } from "@/lib/status-meta";
+import { CLIENT_STATUSES, SEGMENTS, TIERS } from "@/lib/status-meta";
 import { uuidString } from "@/lib/validators";
 import { z } from "zod";
 
@@ -57,7 +58,12 @@ const updateSchema = z.object({
   // marca (geração de arte) — "" limpa o campo
   logoUrl: z.string().optional(),
   brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "cor em hex, ex: #7c5cff").or(z.literal("")).optional(),
-  tier: z.enum(["basica", "completa"]).optional(),
+  // pacote de gestão (lib/content-packages); "completa" = antigo, ainda aceito
+  tier: z.enum(TIERS, { error: "Pacote de gestão inválido." }).optional(),
+  // pacote com carrossel: 1 por semana ou 1 a cada 15 dias
+  carouselFrequency: z.enum(CAROUSEL_FREQUENCIES, { error: "Frequência de carrossel inválida." }).optional(),
+  // pacote com reels: 1–5 = seg–sex (o servidor grava null quando o pacote não tem reels)
+  reelsWeekday: z.number().int().min(1).max(5).nullable().optional(),
   // exibir dados de contato na arte gerada?
   showContacts: z.boolean().optional(),
   // a agência agenda e publica? true → false devolve os posts da fila para draft
@@ -158,7 +164,7 @@ export async function PATCH(
 
   const current = await prisma.client.findUnique({
     where: { id },
-    select: { email: true, extraEmails: true, status: true },
+    select: { email: true, extraEmails: true, status: true, tier: true, reelsWeekday: true },
   });
   if (!current) return Response.json({ error: "Cliente não encontrado" }, { status: 404 });
 
@@ -189,6 +195,13 @@ export async function PATCH(
 
   if (status !== undefined && status !== current.status) data.statusChangedAt = new Date();
 
+  // dia dos reels coerente com o pacote (sem reels → null; com reels e sem dia → quarta)
+  if (parsed.data.tier !== undefined || parsed.data.reelsWeekday !== undefined) {
+    const tier = parsed.data.tier ?? current.tier;
+    const wanted = parsed.data.reelsWeekday !== undefined ? parsed.data.reelsWeekday : current.reelsWeekday;
+    data.reelsWeekday = normalizePackageFields(tier, wanted).reelsWeekday;
+  }
+
   if (responsibleUserId && !(await prisma.user.findUnique({ where: { id: responsibleUserId }, select: { id: true } }))) {
     return Response.json({ error: "Usuário responsável não encontrado.", field: "responsibleUserId" }, { status: 400 });
   }
@@ -213,11 +226,7 @@ export async function PATCH(
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError) {
       if (e.code === "P2025") return Response.json({ error: "Cliente não encontrado" }, { status: 404 });
-      // uq_clients_email_aprovacao: e-mail de outro cliente COM aprovação (inclui trocar o plano
-      // sem → com aprovação). A transação é desfeita: nada é gravado.
-      if (e.code === "P2002") {
-        return Response.json({ error: APPROVAL_EMAIL_TAKEN, field: "email" }, { status: 409 });
-      }
+      // e-mail principal: sem unicidade desde 2026-10-20 (pode repetir em qualquer plano)
     }
     throw e;
   }

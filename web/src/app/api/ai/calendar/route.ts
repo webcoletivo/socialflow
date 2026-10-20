@@ -9,6 +9,16 @@ import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 import { enforceAiQuota } from "@/lib/ai-quota";
 import { readJsonLimited } from "@/lib/read-json";
 import { toUserMessage } from "@/lib/user-facing-error";
+import {
+  CONTENT_KIND,
+  PACKAGE,
+  buildPackageSlots,
+  isPackageTier,
+  packageSummary,
+  slotDayLabel,
+  spToday,
+  type PackageSlot,
+} from "@/lib/content-packages";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +72,29 @@ type Idea = {
   theme: string;
   format?: string;
   explanation?: string;
+  /** cliente com pacote: número do slot (1..n) */
+  slot?: unknown;
 };
+
+/**
+ * Prompt do cliente com pacote de gestão: o SISTEMA já montou os slots (data, hora, tipo) e a IA
+ * só cria tema + explicação para cada um, respeitando o tipo do slot.
+ */
+function packagePrompt(slots: PackageSlot[]): string {
+  const lines = slots.map((s, i) => `${i + 1}. ${slotDayLabel(s)} às ${s.time} — ${CONTENT_KIND[s.contentKind].prompt}`);
+  return [
+    `Gere EXATAMENTE ${slots.length} ideias, UMA PARA CADA slot abaixo, na mesma ordem. `,
+    "O tipo de cada slot já está definido e NÃO pode mudar: a ideia tem de servir para aquele tipo ",
+    "(ex.: reels gravado = algo que o cliente consegue gravar; reels de banco de imagens = montado com imagens de banco; ",
+    "banner animado = mensagem curta e direta; story exclusivo = conteúdo rápido e interativo, diferente dos posts do feed). ",
+    "Varie os assuntos (educativo, bastidores, prova social, promocional, engajamento, dica rápida, institucional) e evite repetir temas.\n",
+    "Slots:\n",
+    lines.join("\n"),
+    "\nPara cada slot forneça: theme (título curto e forte, pronto para ser o título da postagem) ",
+    "e explanation (1-2 frases, em pt-BR, explicando para o CLIENTE o que essa postagem vai abordar e por quê — sem jargão, sem legenda pronta). ",
+    `Responda em JSON no formato: {"posts":[{"slot":1,"theme":"...","explanation":"..."}]} com ${slots.length} itens.`,
+  ].join("");
+}
 
 /** Teto do corpo (cliente, mês, horário, quantidade, redes). */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -90,6 +122,9 @@ export async function POST(req: NextRequest) {
     select: {
       name: true,
       toneOfVoice: true,
+      tier: true,
+      carouselFrequency: true,
+      reelsWeekday: true,
       socialAccounts: { where: { status: "active" }, select: { platform: true } },
     },
   });
@@ -103,14 +138,28 @@ export async function POST(req: NextRequest) {
         ? activePlatforms
         : ["instagram", "facebook"];
 
-  const dates = pickDates(year, mon, count, time);
+  // pacote de gestão: o sistema monta os slots do mês (só os dias que ainda não passaram);
+  // cliente "completa" (antigo) ou "basica": comportamento de antes (12 posts seg/qua/sex)
+  const tier = client.tier;
+  const plan = isPackageTier(tier)
+    ? buildPackageSlots({
+        tier,
+        year,
+        month: mon,
+        carouselFrequency: client.carouselFrequency,
+        reelsWeekday: client.reelsWeekday,
+        time,
+        today: spToday(),
+      })
+    : null;
+  const dates = plan ? plan.slots.map((s) => new Date(s.scheduledAt)) : pickDates(year, mon, count, time);
   if (dates.length === 0) {
     return Response.json(
       { error: "Este mês não tem mais datas futuras disponíveis. Gere o calendário do próximo mês." },
       { status: 400 }
     );
   }
-  const n = Math.min(count, dates.length);
+  const n = plan ? plan.slots.length : Math.min(count, dates.length);
 
   const monthName = new Intl.DateTimeFormat("pt-BR", {
     month: "long",
@@ -126,18 +175,23 @@ export async function POST(req: NextRequest) {
     "Cria cronogramas editoriais mensais variados e coerentes com o tom de voz do cliente. " +
     "Responda SOMENTE com JSON válido, sem texto fora do JSON.";
 
-  const prompt = [
+  const header = [
     `Cliente: ${client.name}.`,
     client.toneOfVoice ? `Tom de voz: ${client.toneOfVoice}.` : "Tom de voz: não informado, use um tom profissional e próximo.",
     `Mês de referência: ${monthName}.`,
-    `Gere EXATAMENTE ${n} ideias de post para o mês, variando os tipos de conteúdo `,
-    "(educativo, bastidores, prova social/depoimento, promocional, engajamento/pergunta, dica rápida, institucional). ",
-    "Evite repetir temas. Para cada post forneça: ",
-    "theme (título curto e forte, pronto para ser o título da postagem), ",
-    "format (um de: 'feed', 'carrossel', 'reels' — todo post ganha um story de apoio automaticamente, não gere posts só de story) ",
-    "e explanation (1-2 frases, em pt-BR, explicando para o CLIENTE o que essa postagem vai abordar e por quê — sem jargão, sem legenda pronta). ",
-    `Responda em JSON no formato: {"posts":[{"theme":"...","format":"...","explanation":"..."}]} com ${n} itens.`,
-  ].join("");
+  ];
+  const prompt = plan
+    ? [...header, packagePrompt(plan.slots)].join("")
+    : [
+        ...header,
+        `Gere EXATAMENTE ${n} ideias de post para o mês, variando os tipos de conteúdo `,
+        "(educativo, bastidores, prova social/depoimento, promocional, engajamento/pergunta, dica rápida, institucional). ",
+        "Evite repetir temas. Para cada post forneça: ",
+        "theme (título curto e forte, pronto para ser o título da postagem), ",
+        "format (um de: 'feed', 'carrossel', 'reels' — todo post ganha um story de apoio automaticamente, não gere posts só de story) ",
+        "e explanation (1-2 frases, em pt-BR, explicando para o CLIENTE o que essa postagem vai abordar e por quê — sem jargão, sem legenda pronta). ",
+        `Responda em JSON no formato: {"posts":[{"theme":"...","format":"...","explanation":"..."}]} com ${n} itens.`,
+      ].join("");
 
   // teto de gerações por IA da usuária e do sistema (CF-12)
   const quota = enforceAiQuota(user.id, 1, "calendario");
@@ -168,6 +222,48 @@ export async function POST(req: NextRequest) {
   const items = ideas.slice(0, n);
   if (items.length === 0) {
     return Response.json({ error: "A IA não retornou ideias." }, { status: 502 });
+  }
+
+  if (plan && isPackageTier(tier)) {
+    // um item por slot, na ordem; "slot" (1..n) da IA tem prioridade sobre a posição.
+    // Slot sem ideia fica sem título: a equipe escreve ou usa "Substituir".
+    const bySlot = new Map<number, Idea>();
+    ideas.forEach((idea, i) => {
+      const k = typeof idea?.slot === "number" ? idea.slot - 1 : i;
+      if (k >= 0 && k < plan.slots.length && !bySlot.has(k)) bySlot.set(k, idea);
+    });
+    const posts = plan.slots.map((s, i) => {
+      const idea = bySlot.get(i);
+      return {
+        theme: typeof idea?.theme === "string" ? idea.theme.trim().slice(0, 200) : "",
+        format: s.format,
+        contentKind: s.contentKind,
+        withStory: s.withStory,
+        explanation: typeof idea?.explanation === "string" ? idea.explanation.trim().slice(0, 600) : "",
+        captions: {} as Record<string, string>,
+        scheduledAt: s.scheduledAt,
+        targets,
+        mediaUrl: "",
+      };
+    });
+    return Response.json(
+      {
+        month,
+        clientName: client.name,
+        targets,
+        activePlatforms,
+        model,
+        posts,
+        package: {
+          tier,
+          label: PACKAGE[tier].label,
+          summary: packageSummary(tier, client.carouselFrequency),
+          planned: plan.planned,
+          generated: plan.slots.length,
+        },
+      },
+      { status: 200 }
+    );
   }
 
   // Preview: NÃO salva nada. Devolve os rascunhos gerados para o usuário

@@ -12,7 +12,7 @@ import { Switch } from "@/components/Toggle";
 import { Toast, type ToastState } from "@/components/Toast";
 import { EmptyState, StatusBadge } from "@/components/ui";
 import { clientColor } from "@/lib/client-color";
-import { CLIENT_STATUS, CLIENT_STATUSES, PLAN, PLANS, SEGMENTS, TIER, labelOf } from "@/lib/status-meta";
+import { CLIENT_STATUS, CLIENT_STATUSES, PLAN, PLANS, SEGMENTS, TIER, TIERS, labelOf } from "@/lib/status-meta";
 import {
   StopPublishingDialog,
   patchClient,
@@ -80,6 +80,7 @@ type Filters = {
   segment: string; // "todos" | "sem" | segmento
   status: string; // "todos" | status
   plan: string; // "todas" | plano
+  tier: string; // "todos" | pacote de gestão
   publishes: string; // "todos" | "sim" | "nao"
 };
 
@@ -90,6 +91,7 @@ const DEFAULT_FILTERS: Filters = {
   segment: "todos",
   status: "ativo",
   plan: "todas",
+  tier: "todos",
   publishes: "todos",
 };
 
@@ -108,6 +110,7 @@ function matches(c: ClientRow, f: Filters): boolean {
   if (f.segment === "sem" ? c.segment : f.segment !== "todos" && c.segment !== f.segment) return false;
   if (f.status !== "todos" && c.status !== f.status) return false;
   if (f.plan !== "todas" && c.plan !== f.plan) return false;
+  if (f.tier !== "todos" && c.tier !== f.tier) return false;
   if (f.publishes !== "todos" && c.agencyPublishes !== (f.publishes === "sim")) return false;
   return true;
 }
@@ -384,8 +387,8 @@ export default function ClientsTable({ clients, users }: { clients: ClientRow[];
     <div className="grid gap-4">
       {/* ---------- filtros ---------- */}
       <div className="card grid gap-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-7">
-          <div className="self-end sm:col-span-2 lg:col-span-3 2xl:col-span-1">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+          <div className="self-end sm:col-span-2 lg:col-span-4 2xl:col-span-1">
             <Input
               type="search"
               size="sm"
@@ -441,6 +444,16 @@ export default function ClientsTable({ clients, users }: { clients: ClientRow[];
               {PLANS.map((p) => (
                 <option key={p} value={p}>
                   {labelOf(PLAN, p)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Pacote">
+            <Select size="sm" value={filters.tier} onChange={(e) => setFilter({ tier: e.target.value })}>
+              <option value="todos">Todos</option>
+              {TIERS.map((t) => (
+                <option key={t} value={t}>
+                  {t === "completa" ? "Completa (antigo)" : labelOf(TIER, t)}
                 </option>
               ))}
             </Select>

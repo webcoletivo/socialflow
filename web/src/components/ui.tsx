@@ -16,6 +16,7 @@ import {
 } from "@/lib/status-meta";
 import { STAGE_META, type ProductionStage } from "@/lib/production";
 import { formatMeta, type PostFormat } from "@/lib/formats";
+import { contentKindLabel } from "@/lib/content-packages";
 
 /*
  * Peças de página compartilhadas por telas de servidor e de cliente (sem
@@ -235,14 +236,25 @@ export function ToneBadge({
   );
 }
 
-/** Formato do post com a cor do lib/formats (A-029). */
-export function FormatBadge({ format, size = "sm" }: { format: string; size?: "sm" | "md" }) {
+/**
+ * Formato do post com a cor do lib/formats (A-029). Com `kind` (posts.content_kind do pacote de
+ * gestão) o rótulo vira o tipo — "Reels banco", "Banner animado", "Story exclusivo"… — na cor do formato.
+ */
+export function FormatBadge({
+  format,
+  kind,
+  size = "sm",
+}: {
+  format: string;
+  kind?: string | null;
+  size?: "sm" | "md";
+}) {
   const meta = formatMeta(format);
   const c = FORMAT_BADGE[meta.id];
   return (
     <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-medium ${BADGE_SIZE[size]} ${c.badge}`}>
       <span aria-hidden="true" className={`size-2 shrink-0 rounded-xs ${c.swatch}`} />
-      {meta.label}
+      {contentKindLabel(kind) ?? meta.label}
     </span>
   );
 }

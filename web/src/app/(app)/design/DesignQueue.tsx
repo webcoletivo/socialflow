@@ -250,7 +250,7 @@ function DesignItem({
       {/* formato + tema; cliente · designer */}
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2">
-          <FormatBadge format={row.format} />
+          <FormatBadge format={row.format} kind={row.contentKind} />
           <Link
             href={`/posts/${row.id}`}
             prefetch={false}

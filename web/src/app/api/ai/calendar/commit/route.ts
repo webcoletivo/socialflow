@@ -11,6 +11,7 @@ import { readJsonLimited } from "@/lib/read-json";
 import { mediaUrlProblem } from "@/lib/media-url";
 import { prepareClientDriveFolders, spMonthKey } from "@/lib/drive-sync";
 import { fillMissingCaptions, needsContent } from "@/lib/calendar-captions";
+import { CONTENT_KINDS } from "@/lib/content-packages";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +41,8 @@ const postSchema = z.object({
   captions: captionsSchema,
   mediaUrl: z.string().url().optional().or(z.literal("")),
   format: z.enum(["feed", "story", "carrossel", "reels"]).default("feed"),
+  // tipo do conteúdo no pacote de gestão (posts.content_kind); ausente/null = sem tipo
+  contentKind: z.enum(CONTENT_KINDS).nullable().optional(),
   scheduledAt: z.string().datetime(),
   targets: z.array(z.enum(["instagram", "facebook", "linkedin"])).min(1),
   slides: z.array(z.object({ text: z.string().max(2000) })).max(20).optional(),
@@ -162,6 +165,7 @@ export async function POST(req: server.NextRequest) {
                 : undefined,
               mediaUrl: p.mediaUrl || null,
               format: p.format,
+              contentKind: p.contentKind ?? null,
               scheduledAt: new Date(p.scheduledAt),
               targets: p.targets,
               status: "draft",

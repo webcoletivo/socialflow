@@ -35,12 +35,10 @@ model User {
 model Client {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name          String
-  // e-mail principal. SEM @unique de propósito: cliente "sem_aprovacao" pode repetir o e-mail de
-  // outro cliente (ex.: o da agência); entre os "aprovacao_cliente" ele é único (sem diferenciar
-  // maiúsculas) pelo índice parcial uq_clients_email_aprovacao — lower(email) WHERE
-  // plan = 'aprovacao_cliente' — criado em system/migrations/2026-10-07-email-cliente-sem-aprovacao.sql.
-  // O Prisma não modela índice parcial: violação chega como P2002 (409 nas APIs de clients).
-  // Não usar `prisma db push` neste banco (removeria o índice).
+  // e-mail principal. SEM unicidade de propósito (20/10): pode repetir o e-mail de outro cliente em
+  // qualquer plano (ex.: o e-mail da agência, ou a aprovação que vai para uma única pessoa).
+  // O índice parcial antigo uq_clients_email_aprovacao foi removido em
+  // system/migrations/2026-10-20-pacotes-gestao.sql.
   email         String
   plan          String    @default("sem_aprovacao")
   toneOfVoice   String?   @map("tone_of_voice")
@@ -61,7 +59,13 @@ model Client {
   // marca (p/ geração de arte por IA em clientes de gestão básica)
   logoUrl       String?   @map("logo_url")
   brandColor    String?   @map("brand_color") // hex, ex: #7c5cff
-  tier          String    @default("completa") // basica | completa
+  // pacote de gestão (lib/content-packages): gestao_1 | gestao_2 | gestao_3_stories | gestao_reels |
+  // basica (artes-base por IA) | completa (antigo, sem pacote — a tela pede para escolher um)
+  tier          String    @default("completa")
+  // pacote com carrossel: "semanal" | "quinzenal" (CHECK ck_clients_carousel_frequency)
+  carouselFrequency String @default("quinzenal") @map("carousel_frequency")
+  // pacote com reels: dia da semana dos reels, 1–5 = seg–sex; null sem reels (CHECK ck_clients_reels_weekday)
+  reelsWeekday  Int?      @map("reels_weekday") @db.SmallInt
   // exibir dados de contato (phone/whatsapp/site/instagram) na arte gerada?
   showContacts  Boolean   @default(false) @map("show_contacts")
   // a agência agenda e publica? false = só produção: nenhum post entra na fila
@@ -163,6 +167,8 @@ model Post {
   // roteiro por tela (carrossel/reels): [{ text }] — conteúdo textual planejado de cada slide
   slides      Json?
   format      String    @default("feed") // feed | story | carrossel | reels
+  // tipo do conteúdo no pacote de gestão (lib/content-packages CONTENT_KINDS); null = sem tipo
+  contentKind String?   @map("content_kind")
   scheduledAt DateTime  @map("scheduled_at") @db.Timestamptz(6)
   targets     String[]
   status      String    @default("scheduled")

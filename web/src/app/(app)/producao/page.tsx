@@ -16,6 +16,7 @@ import {
   type ProductionStage,
 } from "@/lib/production";
 import { formatMeta } from "@/lib/formats";
+import { contentKindLabel } from "@/lib/content-packages";
 import { CLIENT_STATUSES, SEGMENTS } from "@/lib/status-meta";
 import { spDateFromKey, spDateKey } from "@/lib/deadlines";
 import { formatMonthLabel } from "@/lib/format-date";
@@ -148,6 +149,7 @@ export default async function ProducaoPage({ searchParams }: { searchParams: Sea
         clientId: true,
         scheduledAt: true,
         format: true,
+        contentKind: true,
         status: true,
         caption: true,
         captions: true,
@@ -250,7 +252,12 @@ export default async function ProducaoPage({ searchParams }: { searchParams: Sea
     const issue: MarkerModel["issue"] =
       p.status === "failed" ? "failed" : adjustments > 0 ? "adjustment" : pendingKinds.length > 0 ? "waitingMaterial" : null;
 
-    const label = [row.client.name, `${String(day).padStart(2, "0")}/${mm}`, format.label, STAGE_META[stage].label];
+    const label = [
+      row.client.name,
+      `${String(day).padStart(2, "0")}/${mm}`,
+      contentKindLabel(p.contentKind) ?? format.label,
+      STAGE_META[stage].label,
+    ];
     if (p.artDoneAt) label.push(p.artDoneByUser ? `arte feita por ${p.artDoneByUser.name}` : "arte feita");
     else if (!hasArt) label.push("arte a fazer");
     if (adjustments > 0) label.push(adjustments === 1 ? "ajuste pendente" : `${adjustments} ajustes pendentes`);

@@ -66,13 +66,21 @@ export const PLAN: Record<Plan, StatusMeta> = {
   aprovacao_cliente: { label: "Com aprovação", tone: "info" },
 };
 
-/** Client.tier: tipo de gestão. */
-export const TIERS = ["completa", "basica"] as const;
+/**
+ * Client.tier: pacote de gestão (lib/content-packages). "completa" é o valor antigo (sem pacote):
+ * continua aceito e exibido, mas não é oferecido no cadastro (SELECTABLE_TIERS).
+ */
+export const SELECTABLE_TIERS = ["gestao_1", "gestao_2", "gestao_3_stories", "gestao_reels", "basica"] as const;
+export const TIERS = [...SELECTABLE_TIERS, "completa"] as const;
 export type Tier = (typeof TIERS)[number];
 
 export const TIER: Record<Tier, StatusMeta> = {
-  completa: { label: "Gestão completa", tone: "neutral" },
-  basica: { label: "Gestão básica", tone: "accent" },
+  gestao_1: { label: "Gestão 1", tone: "neutral" },
+  gestao_2: { label: "Gestão 2", tone: "neutral" },
+  gestao_3_stories: { label: "Gestão 3 (Stories)", tone: "neutral" },
+  gestao_reels: { label: "Gestão Reels", tone: "neutral" },
+  basica: { label: "Básica (artes-base por IA)", tone: "accent" },
+  completa: { label: "Completa (antigo) — escolha um pacote", tone: "warning" },
 };
 
 /** SocialAccount.status. */

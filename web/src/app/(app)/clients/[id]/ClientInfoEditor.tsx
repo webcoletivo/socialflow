@@ -14,9 +14,20 @@ import { MultiEmailInput } from "@/components/MultiEmailInput";
 import { SegmentedControl } from "@/components/Toggle";
 import { Toast, type ToastState } from "@/components/Toast";
 import { StatusBadge } from "@/components/ui";
-import { APPROVAL_EMAIL_TAKEN, isValidEmail, normalizeEmail } from "@/lib/client-emails";
+import { isValidEmail, normalizeEmail } from "@/lib/client-emails";
 import { clientColor } from "@/lib/client-color";
-import { CLIENT_STATUS, CLIENT_STATUSES, PLAN, PLANS, SEGMENTS, TIER, TIERS, labelOf } from "@/lib/status-meta";
+import {
+  CAROUSEL_FREQUENCIES,
+  CAROUSEL_FREQUENCY_LABEL,
+  DEFAULT_CAROUSEL_FREQUENCY,
+  DEFAULT_REELS_WEEKDAY,
+  PACKAGE,
+  REELS_WEEKDAYS,
+  WEEKDAY_LABEL,
+  isPackageTier,
+  isReelsWeekday,
+} from "@/lib/content-packages";
+import { CLIENT_STATUS, CLIENT_STATUSES, PLAN, PLANS, SEGMENTS, SELECTABLE_TIERS, TIER, labelOf } from "@/lib/status-meta";
 
 /*
  * Formulário de cliente (DESIGN g.5): criação (`NewClientForm`, usado por
@@ -37,6 +48,10 @@ export type ClientInfo = {
   extraEmails: string[];
   plan: string;
   tier: string;
+  /** pacote com carrossel: "semanal" | "quinzenal" */
+  carouselFrequency: string;
+  /** pacote com reels: 1–5 = seg–sex */
+  reelsWeekday: number | null;
   agencyPublishes: boolean;
   status: string;
   segment: string | null;
@@ -65,6 +80,8 @@ type FieldKey =
   | "extraEmails"
   | "plan"
   | "tier"
+  | "carouselFrequency"
+  | "reelsWeekday"
   | "agencyPublishes"
   | "responsibleUserId"
   | "designerUserId"
@@ -90,6 +107,8 @@ const FIELD_ORDER: FieldKey[] = [
   "extraEmails",
   "plan",
   "tier",
+  "carouselFrequency",
+  "reelsWeekday",
   "agencyPublishes",
   "responsibleUserId",
   "designerUserId",
@@ -113,7 +132,9 @@ const SERVER_FIELD_MESSAGE: Record<FieldKey, string> = {
   email: "Informe um e-mail válido, como nome@empresa.com.br.",
   extraEmails: "Confira os e-mails adicionais.",
   plan: "Escolha uma opção de aprovação da lista.",
-  tier: "Escolha um tipo de gestão da lista.",
+  tier: "Escolha um pacote de gestão da lista.",
+  carouselFrequency: "Escolha a frequência dos carrosséis da lista.",
+  reelsWeekday: "Escolha o dia dos reels da lista.",
   agencyPublishes: "Escolha Sim ou Não.",
   responsibleUserId: "Escolha uma redatora da lista.",
   designerUserId: "Escolha um designer da lista.",
@@ -154,8 +175,8 @@ async function readFailure(res: Response, fallback: string): Promise<ApiFailure>
   if (res.status === 401) return { fields: {}, itemErrors: {}, message: "Sua sessão expirou. Entre de novo para salvar." };
   if (res.status === 404) return { fields: {}, itemErrors: {}, message: "Cliente não encontrado. Ele pode ter sido excluído." };
   if (res.status === 409) {
-    // e-mail principal já usado por outro cliente COM aprovação (o servidor manda texto e campo)
-    const message = typeof error === "string" ? error : APPROVAL_EMAIL_TAKEN;
+    // conflito com texto e campo vindos do servidor (o e-mail principal pode repetir desde 20/10)
+    const message = typeof error === "string" ? error : fallback;
     const key: FieldKey = typeof field === "string" && isFieldKey(field) ? field : "email";
     return { fields: { [key]: message }, itemErrors: {}, message };
   }
@@ -367,6 +388,9 @@ type FormValues = {
   extraEmails: string[];
   plan: string;
   tier: string;
+  carouselFrequency: string;
+  /** "1".."5" (seg–sex) */
+  reelsWeekday: string;
   agencyPublishes: boolean;
   responsibleUserId: string;
   designerUserId: string;
@@ -389,7 +413,9 @@ const EMPTY_VALUES: FormValues = {
   email: "",
   extraEmails: [],
   plan: "sem_aprovacao",
-  tier: "completa",
+  tier: "gestao_1",
+  carouselFrequency: DEFAULT_CAROUSEL_FREQUENCY,
+  reelsWeekday: String(DEFAULT_REELS_WEEKDAY),
   agencyPublishes: true,
   responsibleUserId: "",
   designerUserId: "",
@@ -415,6 +441,8 @@ function valuesFromClient(c: ClientInfo): FormValues {
     extraEmails: c.extraEmails,
     plan: c.plan,
     tier: c.tier,
+    carouselFrequency: c.carouselFrequency === "semanal" ? "semanal" : DEFAULT_CAROUSEL_FREQUENCY,
+    reelsWeekday: String(isReelsWeekday(c.reelsWeekday) ? c.reelsWeekday : DEFAULT_REELS_WEEKDAY),
     agencyPublishes: c.agencyPublishes,
     responsibleUserId: c.responsibleUserId ?? "",
     designerUserId: c.designerUserId ?? "",
@@ -490,6 +518,31 @@ function errorList(errors: FormErrors): string[] {
   return [...new Set(FIELD_ORDER.flatMap((k) => (errors[k] ? [errors[k] as string] : [])))];
 }
 
+/** Campos do pacote para o corpo de POST/PATCH: frequência sempre; dia dos reels só se o pacote tem reels. */
+function packageBody(v: FormValues): { carouselFrequency: string; reelsWeekday: number | null } {
+  const hasReels = isPackageTier(v.tier) && PACKAGE[v.tier].hasReels;
+  return { carouselFrequency: v.carouselFrequency, reelsWeekday: hasReels ? Number(v.reelsWeekday) : null };
+}
+
+/** Texto curto do pacote escolhido (ajuda do select). */
+function tierHelp(tier: string): string {
+  if (isPackageTier(tier)) return PACKAGE[tier].description;
+  if (tier === "basica") return "As artes do calendário padrão são geradas por IA.";
+  return "Tipo antigo, sem pacote: o cronograma com IA continua livre (12 posts) até você escolher um pacote.";
+}
+
+/** Detalhes do pacote na leitura: "Carrossel: 1 a cada 15 dias · Reels: Quarta". */
+function packageDetails(c: Pick<ClientInfo, "tier" | "carouselFrequency" | "reelsWeekday">): string | null {
+  if (!isPackageTier(c.tier)) return null;
+  const parts: string[] = [];
+  if (PACKAGE[c.tier].hasCarousel) {
+    const f = c.carouselFrequency === "semanal" ? "semanal" : "quinzenal";
+    parts.push(`Carrossel: ${CAROUSEL_FREQUENCY_LABEL[f]}`);
+  }
+  if (PACKAGE[c.tier].hasReels && isReelsWeekday(c.reelsWeekday)) parts.push(`Reels: ${WEEKDAY_LABEL[c.reelsWeekday]}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 const GROUP = "m-0 grid min-w-0 gap-4 border-0 p-0";
 const LEGEND = "mb-3 p-0 font-display text-base font-semibold text-fg";
 
@@ -519,6 +572,7 @@ function ClientFormFields({
   queuedPostsCount?: number;
 }) {
   const isBasica = values.tier === "basica";
+  const pkg = isPackageTier(values.tier) ? PACKAGE[values.tier] : null;
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -575,12 +629,7 @@ function ClientFormFields({
             required
             help={
               <>
-                Recebe os links de aprovação e os avisos.
-                {values.plan === "sem_aprovacao" && (
-                  <span className="mt-0.5 block">
-                    Sem aprovação: pode repetir o e-mail de outro cliente (ex.: o e-mail da agência).
-                  </span>
-                )}
+                Recebe os links de aprovação e os avisos. Pode ser o mesmo e-mail de outro cliente.
               </>
             }
             error={errors.email}
@@ -630,20 +679,48 @@ function ClientFormFields({
               ))}
             </Select>
           </Field>
-          <Field
-            id={`${prefix}-tier`}
-            label="Tipo de gestão"
-            help="Básica: as artes do calendário padrão são geradas por IA."
-            error={errors.tier}
-          >
+          <Field id={`${prefix}-tier`} label="Pacote de gestão" help={tierHelp(values.tier)} error={errors.tier}>
             <Select value={values.tier} onChange={(e) => set({ tier: e.target.value })} disabled={disabled}>
-              {TIERS.map((t) => (
+              {/* "completa" (antigo) só aparece para quem ainda está nele, até escolher um pacote */}
+              {values.tier === "completa" && <option value="completa">{labelOf(TIER, "completa")}</option>}
+              {SELECTABLE_TIERS.map((t) => (
                 <option key={t} value={t}>
                   {labelOf(TIER, t)}
                 </option>
               ))}
             </Select>
           </Field>
+          {pkg?.hasCarousel && (
+            <Field
+              id={`${prefix}-carouselFrequency`}
+              label="Carrossel"
+              help="Quantos carrosséis entram no cronograma do mês."
+              error={errors.carouselFrequency}
+            >
+              <Select
+                value={values.carouselFrequency}
+                onChange={(e) => set({ carouselFrequency: e.target.value })}
+                disabled={disabled}
+              >
+                {CAROUSEL_FREQUENCIES.map((f) => (
+                  <option key={f} value={f}>
+                    {CAROUSEL_FREQUENCY_LABEL[f]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {pkg?.hasReels && (
+            <Field id={`${prefix}-reelsWeekday`} label="Dia dos reels" help="1 reels por semana neste dia." error={errors.reelsWeekday}>
+              <Select value={values.reelsWeekday} onChange={(e) => set({ reelsWeekday: e.target.value })} disabled={disabled}>
+                {REELS_WEEKDAYS.map((d) => (
+                  <option key={d} value={String(d)}>
+                    {WEEKDAY_LABEL[d]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
         </div>
         <Field
           id={`${prefix}-agencyPublishes`}
@@ -994,6 +1071,7 @@ export function NewClientForm({ users }: { users: UserOption[] }) {
       email: v.email.trim(),
       plan: v.plan,
       tier: v.tier,
+      ...packageBody(v),
       agencyPublishes: v.agencyPublishes,
       ...(v.extraEmails.length > 0 ? { extraEmails: v.extraEmails } : {}),
       ...(v.responsibleUserId ? { responsibleUserId: v.responsibleUserId } : {}),
@@ -1153,6 +1231,7 @@ export default function ClientInfoEditor({
       extraEmails: v.extraEmails,
       plan: v.plan,
       tier: v.tier,
+      ...packageBody(v),
       agencyPublishes: v.agencyPublishes,
       responsibleUserId: v.responsibleUserId || null,
       designerUserId: v.designerUserId || null,
@@ -1259,7 +1338,10 @@ export default function ClientInfoEditor({
             )}
           </InfoItem>
           <InfoItem label="Plano">{labelOf(PLAN, client.plan)}</InfoItem>
-          <InfoItem label="Tipo de gestão">{labelOf(TIER, client.tier)}</InfoItem>
+          <InfoItem label="Pacote de gestão">
+            {client.tier === "completa" ? <StatusBadge kind="tier" status="completa" /> : labelOf(TIER, client.tier)}
+            {packageDetails(client) && <span className="mt-0.5 block text-fg-muted">{packageDetails(client)}</span>}
+          </InfoItem>
           <InfoItem label="Agendar posts?">
             {client.agencyPublishes ? (
               "Sim — o sistema agenda e publica"
