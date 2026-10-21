@@ -11,18 +11,20 @@ import { SegmentedControl } from "@/components/Toggle";
 import {
   activeFilterCount,
   DESIGN_SHOW_OPTIONS,
+  DESIGN_VIEW_OPTIONS,
   DESIGNER_ALL,
   DESIGNER_NONE,
   designHref,
   shiftMonth,
   type DesignFilterValues,
   type DesignShow,
+  type DesignView,
   type UserRef,
 } from "./design-view";
 
 /*
  * Filtros e navegação de mês da fila de artes (/design), no padrão do Quadro de
- * Produção: estado na URL, uma só transição para cabeçalho, filtros e lista
+ * Produção: "Ver" (lista | calendário), estado na URL, uma só transição para cabeçalho, filtros e lista
  * (aria-busy + opacidade + barra), diálogo "Filtros" no celular.
  */
 
@@ -156,6 +158,9 @@ export default function DesignFilters({
   const [draft, setDraft] = useState(values);
   const showId = useId();
   const showMobileId = useId();
+  const viewId = useId();
+  const viewMobileId = useId();
+  const calendar = local.ver === "calendario";
 
   const apply = (next: DesignFilterValues) => {
     setLocal(next);
@@ -168,16 +173,27 @@ export default function DesignFilters({
   return (
     <>
       <div className="mb-5 hidden flex-wrap items-end gap-3 md:flex">
-        <FilterSelects {...selectProps} values={local} onChange={apply} size="sm" fieldClassName="w-52" />
-        <Field id={showId} kind="group" label="Mostrar">
+        <Field id={viewId} kind="group" label="Ver">
           <SegmentedControl
-            aria-labelledby={`${showId}-label`}
+            aria-labelledby={`${viewId}-label`}
             size="sm"
-            value={local.mostrar}
-            options={DESIGN_SHOW_OPTIONS}
-            onChange={(mostrar: DesignShow) => apply({ ...local, mostrar })}
+            value={local.ver}
+            options={DESIGN_VIEW_OPTIONS}
+            onChange={(ver: DesignView) => apply({ ...local, ver })}
           />
         </Field>
+        <FilterSelects {...selectProps} values={local} onChange={apply} size="sm" fieldClassName="w-52" />
+        {!calendar && (
+          <Field id={showId} kind="group" label="Mostrar">
+            <SegmentedControl
+              aria-labelledby={`${showId}-label`}
+              size="sm"
+              value={local.mostrar}
+              options={DESIGN_SHOW_OPTIONS}
+              onChange={(mostrar: DesignShow) => apply({ ...local, mostrar })}
+            />
+          </Field>
+        )}
         {activeFilterCount(local, defaultDesigner) > 0 && (
           <Button variant="ghost" size="sm" onClick={() => apply(cleared(local))}>
             Limpar filtros
@@ -186,14 +202,24 @@ export default function DesignFilters({
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3 md:hidden">
-        <Field id={showMobileId} kind="group" label="Mostrar" labelHidden>
+        <Field id={viewMobileId} kind="group" label="Ver" labelHidden>
           <SegmentedControl
-            aria-labelledby={`${showMobileId}-label`}
-            value={local.mostrar}
-            options={DESIGN_SHOW_OPTIONS}
-            onChange={(mostrar: DesignShow) => apply({ ...local, mostrar })}
+            aria-labelledby={`${viewMobileId}-label`}
+            value={local.ver}
+            options={DESIGN_VIEW_OPTIONS}
+            onChange={(ver: DesignView) => apply({ ...local, ver })}
           />
         </Field>
+        {!calendar && (
+          <Field id={showMobileId} kind="group" label="Mostrar" labelHidden>
+            <SegmentedControl
+              aria-labelledby={`${showMobileId}-label`}
+              value={local.mostrar}
+              options={DESIGN_SHOW_OPTIONS}
+              onChange={(mostrar: DesignShow) => apply({ ...local, mostrar })}
+            />
+          </Field>
+        )}
         <Button
           variant="secondary"
           aria-haspopup="dialog"

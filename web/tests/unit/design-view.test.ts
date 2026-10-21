@@ -71,19 +71,25 @@ describe("filtros da URL", () => {
   });
 
   test("sem parâmetros: mês atual, designer padrão, a fazer", () => {
-    assert.deepEqual(parseDesignParams({}, ctx), { mes: "2026-10", designer: ME, cliente: "", mostrar: "a_fazer" });
+    assert.deepEqual(parseDesignParams({}, ctx), {
+      mes: "2026-10",
+      designer: ME,
+      cliente: "",
+      mostrar: "a_fazer",
+      ver: "lista",
+    });
   });
 
   test("valores válidos passam; inválidos voltam ao padrão", () => {
     assert.deepEqual(
-      parseDesignParams({ mes: "2026-11", designer: OTHER, cliente: CLIENT, mostrar: "feitas" }, ctx),
-      { mes: "2026-11", designer: OTHER, cliente: CLIENT, mostrar: "feitas" },
+      parseDesignParams({ mes: "2026-11", designer: OTHER, cliente: CLIENT, mostrar: "feitas", ver: "calendario" }, ctx),
+      { mes: "2026-11", designer: OTHER, cliente: CLIENT, mostrar: "feitas", ver: "calendario" },
     );
     assert.equal(parseDesignParams({ designer: DESIGNER_NONE }, ctx).designer, DESIGNER_NONE);
     assert.equal(parseDesignParams({ designer: DESIGNER_ALL }, ctx).designer, DESIGNER_ALL);
     assert.deepEqual(
-      parseDesignParams({ mes: "2026-13", designer: "x", cliente: "nao-existe", mostrar: "tudo" }, ctx),
-      { mes: "2026-10", designer: ME, cliente: "", mostrar: "a_fazer" },
+      parseDesignParams({ mes: "2026-13", designer: "x", cliente: "nao-existe", mostrar: "tudo", ver: "grade" }, ctx),
+      { mes: "2026-10", designer: ME, cliente: "", mostrar: "a_fazer", ver: "lista" },
     );
     assert.equal(parseDesignParams({ mostrar: ["todas", "feitas"] }, ctx).mostrar, "todas");
   });
@@ -95,13 +101,14 @@ describe("filtros da URL", () => {
   });
 
   test("URL leva só o que está fora do padrão (mês sempre)", () => {
-    const v = { mes: "2026-10", designer: ME, cliente: "", mostrar: "a_fazer" as const };
+    const v = { mes: "2026-10", designer: ME, cliente: "", mostrar: "a_fazer" as const, ver: "lista" as const };
     assert.equal(designHref(v, ME), "/design?mes=2026-10");
     assert.equal(designHref({ ...v, designer: DESIGNER_ALL }, ME), "/design?mes=2026-10&designer=todos");
     assert.equal(
       designHref({ ...v, designer: DESIGNER_ALL, cliente: CLIENT, mostrar: "todas" }, DESIGNER_ALL),
       `/design?mes=2026-10&cliente=${CLIENT}&mostrar=todas`,
     );
+    assert.equal(designHref({ ...v, ver: "calendario" }, ME), "/design?mes=2026-10&ver=calendario");
     assert.equal(activeFilterCount(v, ME), 0);
     assert.equal(activeFilterCount({ ...v, designer: DESIGNER_NONE, cliente: CLIENT }, ME), 2);
   });

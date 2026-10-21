@@ -99,6 +99,8 @@
   --sf-stage-post-aprovado-on: #fffdf7;
   --sf-stage-post-aprovado-solid: #a8239a;
   --sf-stage-post-aprovado-text: #931f87;
+  /* calendário do Design: "Arte ok" (roxo da planilha Controle de Gestão) */
+  --sf-art-ok: #5b3bb5;
   --sf-shadow-card: 0 1px 2px rgb(23 21 16 / 0.05);
   --sf-shadow-raised: 0 1px 2px rgb(23 21 16 / 0.06), 0 12px 32px -12px rgb(23 21 16 / 0.24);
   --sf-shadow-bar: 0 -8px 24px -12px rgb(23 21 16 / 0.18);
@@ -202,6 +204,7 @@
   --sf-stage-post-aprovado-on: #171510;
   --sf-stage-post-aprovado-solid: #f07ce6;
   --sf-stage-post-aprovado-text: #f59eee;
+  --sf-art-ok: #b49cff;
   --sf-shadow-card: none;
   --sf-shadow-raised: 0 1px 0 rgb(255 253 247 / 0.05) inset, 0 16px 40px -12px rgb(0 0 0 / 0.7);
   --sf-shadow-bar: 0 -8px 24px -12px rgb(0 0 0 / 0.6);
@@ -300,6 +303,7 @@
     --sf-stage-post-aprovado-on: #171510;
     --sf-stage-post-aprovado-solid: #f07ce6;
     --sf-stage-post-aprovado-text: #f59eee;
+    --sf-art-ok: #b49cff;
     --sf-shadow-card: none;
     --sf-shadow-raised: 0 1px 0 rgb(255 253 247 / 0.05) inset, 0 16px 40px -12px rgb(0 0 0 / 0.7);
     --sf-shadow-bar: 0 -8px 24px -12px rgb(0 0 0 / 0.6);
@@ -394,6 +398,7 @@
   --color-stage-post-aprovado-on: var(--sf-stage-post-aprovado-on);
   --color-stage-post-aprovado-solid: var(--sf-stage-post-aprovado-solid);
   --color-stage-post-aprovado-text: var(--sf-stage-post-aprovado-text);
+  --color-art-ok: var(--sf-art-ok);
 
   --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-bricolage), var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;

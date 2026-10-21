@@ -1,7 +1,7 @@
 /**
  * Fila de artes da equipe de design (página /design) — SÓ SERVIDOR (usa o Prisma).
  *
- * Quem entra: posts NÃO publicados (qualquer formato, story inclusive: a designer
+ * Quem entra: posts NÃO publicados (com `includePublished`, também os publicados — calendário) (qualquer formato, story inclusive: a designer
  * também faz a arte do story) de clientes com status "ativo". "Arte feita" segue a
  * regra única de `hasArt` (lib/production.ts): marcada pela designer
  * (Post.artDoneAt), com mídia ou publicada.
@@ -48,6 +48,8 @@ export type DesignQueueOptions = {
   month?: string | null;
   /** quais artes devolver em `items` (padrão "a_fazer"); `counts` sempre considera todas */
   include?: DesignQueueInclude;
+  /** também os posts publicados (calendário do /design); padrão false (fila) */
+  includePublished?: boolean;
   /** relógio (testes) */
   now?: Date;
 };
@@ -65,7 +67,7 @@ export type DesignQueueItem = {
   /** tipo do conteúdo no pacote de gestão (posts.content_kind); ausente = sem tipo */
   contentKind?: string;
   scheduledAt: Date;
-  /** status do post: draft | scheduled | publishing | failed (published nunca entra) */
+  /** status do post: draft | scheduled | publishing | failed (published só com `includePublished`) */
   status: string;
   client: { id: string; name: string };
   /** designer efetiva = designer do cliente */
@@ -103,8 +105,30 @@ export type DesignQueueResult = {
   /** designers dos clientes ativos (para o filtro), em ordem alfabética */
   designers: UserRef[];
   /** clientes ativos (para o filtro), em ordem alfabética */
-  clients: { id: string; name: string; designer: UserRef | null }[];
+  clients: DesignQueueClient[];
 };
+
+export type DesignQueueClient = {
+  id: string;
+  name: string;
+  designer: UserRef | null;
+  /** plano com aprovação do cliente (no calendário: "fazer primeiro") */
+  withApproval: boolean;
+  /** a agência agenda/posta */
+  agencyPublishes: boolean;
+};
+
+/** O cliente entra no filtro? designerId: omitido = todos; null = sem designer; id = só os dela. */
+export function matchesDesignFilter(
+  c: { id: string; designer: UserRef | null },
+  designerId: string | null | undefined,
+  clientId: string | null | undefined,
+): boolean {
+  return (
+    (!clientId || c.id.toLowerCase() === clientId.toLowerCase()) &&
+    (designerId === undefined || (designerId === null ? !c.designer : c.designer?.id === designerId))
+  );
+}
 
 const byName = (a: { name: string }, b: { name: string }) =>
   a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
@@ -152,7 +176,7 @@ export function compareDesignItems(
 
 /** Fila de artes. Ver `DesignQueueOptions` e `DesignQueueResult`. */
 export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise<DesignQueueResult> {
-  const { userId = null, designerId, clientId, month, include = "a_fazer" } = options;
+  const { userId = null, designerId, clientId, month, include = "a_fazer", includePublished = false } = options;
   const now = options.now ?? new Date();
   if (month != null && !MONTH_RE.test(month)) {
     throw new RangeError(`month inválido (esperado AAAA-MM): ${month}`);
@@ -161,7 +185,13 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
   // ---- Consulta 1/3: clientes ativos (também alimentam os filtros)
   const activeClients = await prisma.client.findMany({
     where: { status: "ativo" },
-    select: { id: true, name: true, plan: true, designer: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      name: true,
+      plan: true,
+      agencyPublishes: true,
+      designer: { select: { id: true, name: true } },
+    },
   });
   activeClients.sort(byName);
 
@@ -172,21 +202,23 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
     items: [],
     counts: { aFazer: 0, feitas: 0, atrasadas: 0, total: 0 },
     designers: [...designerMap.values()].sort(byName),
-    clients: activeClients.map((c) => ({ id: c.id, name: c.name, designer: c.designer })),
+    clients: activeClients.map((c) => ({
+      id: c.id,
+      name: c.name,
+      designer: c.designer,
+      withApproval: c.plan === "aprovacao_cliente",
+      agencyPublishes: c.agencyPublishes,
+    })),
   };
 
-  const clients = activeClients.filter(
-    (c) =>
-      (!clientId || c.id.toLowerCase() === clientId.toLowerCase()) &&
-      (designerId === undefined || (designerId === null ? !c.designer : c.designer?.id === designerId))
-  );
+  const clients = activeClients.filter((c) => matchesDesignFilter(c, designerId, clientId));
   if (clients.length === 0) return result;
   const clientById = new Map(clients.map((c) => [c.id, c]));
 
-  // ---- Consulta 2/3: posts candidatos (não publicados) dos clientes filtrados
+  // ---- Consulta 2/3: posts candidatos (não publicados, salvo `includePublished`) dos clientes filtrados
   const where: Prisma.PostWhereInput = {
     clientId: { in: clients.map((c) => c.id) },
-    status: { not: "published" },
+    ...(includePublished ? {} : { status: { not: "published" } }),
   };
   if (month) where.scheduledAt = { gte: spDateFromKey(`${month}-01`), lt: spDateFromKey(`${nextMonthKey(month)}-01`) };
   const posts = await prisma.post.findMany({

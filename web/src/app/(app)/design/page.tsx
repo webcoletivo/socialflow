@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { loadDesignQueue, type DesignQueueResult } from "@/lib/design-queue";
+import { loadDesignQueue, matchesDesignFilter, type DesignQueueResult } from "@/lib/design-queue";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { buttonClasses } from "@/components/Button";
 import { Icon } from "@/components/Icons";
@@ -11,6 +11,7 @@ import { formatMonthLabel } from "@/lib/format-date";
 import { uuidString } from "@/lib/validators";
 import DesignFilters, { DesignMonthNav, DesignNavProvider } from "./DesignFilters";
 import DesignQueue from "./DesignQueue";
+import DesignCalendar from "./DesignCalendar";
 import {
   defaultDesignerFor,
   DESIGNER_ALL,
@@ -27,7 +28,8 @@ import {
  * Fila de artes da equipe de design: os posts (não publicados, clientes ativos)
  * cuja arte falta fazer, com avisos de atraso e "Marcar como feita". Filtros na
  * URL: mes, designer (padrão "Minhas" para quem é designer de algum cliente),
- * cliente e mostrar (a_fazer | feitas | todas). Dados de `loadDesignQueue`.
+ * cliente, mostrar (a_fazer | feitas | todas) e ver (lista | calendario: grade
+ * cliente × dia com todos os posts do mês, publicados inclusive). Dados de `loadDesignQueue`.
  */
 
 export const dynamic = "force-dynamic";
@@ -91,6 +93,7 @@ export default async function DesignPage({ searchParams }: { searchParams: Searc
     clientIds: new Set(activeClients.map((c) => c.id)),
   });
   const monthLabel = formatMonthLabel(values.mes);
+  const calendar = values.ver === "calendario";
 
   let queue: DesignQueueResult | null = null;
   try {
@@ -99,7 +102,9 @@ export default async function DesignPage({ searchParams }: { searchParams: Searc
       designerId: designerIdOption(values.designer),
       clientId: values.cliente || null,
       month: values.mes,
-      include: values.mostrar,
+      // o calendário mostra todos os posts do mês, como a planilha (arte e postagem)
+      include: calendar ? "todas" : values.mostrar,
+      includePublished: calendar,
       now,
     });
   } catch (e) {
@@ -129,7 +134,7 @@ export default async function DesignPage({ searchParams }: { searchParams: Searc
   );
 
   return (
-    <div className="page animate-fade-up">
+    <div className={`page animate-fade-up ${calendar ? "page--wide" : ""}`}>
       <DesignNavProvider>
         {header}
         {queue ? (
@@ -142,17 +147,31 @@ export default async function DesignPage({ searchParams }: { searchParams: Searc
               designers={queue.designers}
               clients={queue.clients}
             />
-            <DesignQueue
-              rows={queue.items.map(toRow)}
-              counts={queue.counts}
-              values={values}
-              defaultDesigner={defaultDesigner}
-              isDesigner={isDesigner}
-              monthLabel={monthLabel}
-              todayKey={todayKey}
-              nowMs={now.getTime()}
-              me={me}
-            />
+            {calendar ? (
+              <DesignCalendar
+                rows={queue.items.map(toRow)}
+                clients={queue.clients.filter((c) =>
+                  matchesDesignFilter(c, designerIdOption(values.designer), values.cliente || null),
+                )}
+                month={values.mes}
+                monthLabel={monthLabel}
+                todayKey={todayKey}
+                nowMs={now.getTime()}
+                me={me}
+              />
+            ) : (
+              <DesignQueue
+                rows={queue.items.map(toRow)}
+                counts={queue.counts}
+                values={values}
+                defaultDesigner={defaultDesigner}
+                isDesigner={isDesigner}
+                monthLabel={monthLabel}
+                todayKey={todayKey}
+                nowMs={now.getTime()}
+                me={me}
+              />
+            )}
           </>
         ) : (
           <EmptyState

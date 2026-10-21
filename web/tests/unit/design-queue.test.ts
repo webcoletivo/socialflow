@@ -286,6 +286,12 @@ describe("loadDesignQueue", () => {
     assert.equal((state.calls[2].args.where as PostWhere).status, undefined);
   });
 
+  test("includePublished (calendário): candidatos de qualquer status", async () => {
+    seedMonth();
+    await loadDesignQueue({ now: NOW, include: "todas", includePublished: true });
+    assert.equal((state.calls[1].args.where as PostWhere).status, undefined);
+  });
+
   test("include feitas / todas; artSource e artDoneBy", async () => {
     seedMonth();
     const feitas = await loadDesignQueue({ now: NOW, include: "feitas" });

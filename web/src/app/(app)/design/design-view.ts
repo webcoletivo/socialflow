@@ -22,6 +22,14 @@ export const DESIGN_SHOW_OPTIONS: readonly { value: DesignShow; label: string }[
   { value: "todas", label: "Todas" },
 ];
 
+/** Como a página mostra os posts (`?ver=`): fila agrupada por dia ou calendário cliente × dia. */
+export type DesignView = "lista" | "calendario";
+export const DESIGN_VIEWS: readonly DesignView[] = ["lista", "calendario"];
+export const DESIGN_VIEW_OPTIONS: readonly { value: DesignView; label: string }[] = [
+  { value: "lista", label: "Lista" },
+  { value: "calendario", label: "Calendário" },
+];
+
 /** Filtro de designer: todas as designers. */
 export const DESIGNER_ALL = "todos";
 /** Filtro de designer: clientes sem designer. */
@@ -34,6 +42,8 @@ export type DesignFilterValues = {
   designer: string;
   cliente: string;
   mostrar: DesignShow;
+  /** no calendário, "mostrar" não se aplica (todos os posts do mês aparecem) */
+  ver: DesignView;
 };
 
 export type ArtSource = "marcada" | "midia" | "publicado" | null;
@@ -85,7 +95,7 @@ export function defaultDesignerFor(userId: string | null, designerIds: ReadonlyS
 }
 
 /**
- * Lê `mes`, `designer`, `cliente` e `mostrar`. Valor inválido ou desconhecido é ignorado
+ * Lê `mes`, `designer`, `cliente`, `mostrar` e `ver`. Valor inválido ou desconhecido é ignorado
  * (volta ao padrão), como no Quadro de Produção.
  */
 export function parseDesignParams(
@@ -102,6 +112,7 @@ export function parseDesignParams(
   const designer = first(sp.designer);
   const cliente = first(sp.cliente);
   const mostrar = first(sp.mostrar);
+  const ver = first(sp.ver);
   return {
     mes: MONTH_RE.test(mes) ? mes : ctx.currentMonth,
     designer:
@@ -110,6 +121,7 @@ export function parseDesignParams(
         : ctx.defaultDesigner,
     cliente: ctx.clientIds.has(cliente) ? cliente : "",
     mostrar: (DESIGN_SHOWS as readonly string[]).includes(mostrar) ? (mostrar as DesignShow) : "a_fazer",
+    ver: (DESIGN_VIEWS as readonly string[]).includes(ver) ? (ver as DesignView) : "lista",
   };
 }
 
@@ -127,6 +139,7 @@ export function designHref(v: DesignFilterValues, defaultDesigner: string): stri
   if (v.designer !== defaultDesigner) params.set("designer", v.designer);
   if (v.cliente) params.set("cliente", v.cliente);
   if (v.mostrar !== "a_fazer") params.set("mostrar", v.mostrar);
+  if (v.ver !== "lista") params.set("ver", v.ver);
   return `/design?${params}`;
 }
 
