@@ -81,6 +81,9 @@ export type DesignQueueItem = {
   /** marcado pela designer (Post.artDoneAt); pode existir junto com mídia */
   artDoneAt: Date | null;
   artDoneBy: UserRef | null;
+  /** marcado como postado à mão (calendário do Design): quando e quem; null = não */
+  postedAt: Date | null;
+  postedBy: UserRef | null;
   /** tem mediaUrl ou mediaItems */
   hasMedia: boolean;
   /** a fazer e a data já passou ou falta menos de 48 h */
@@ -241,6 +244,8 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
       weeklyReviewId: true,
       artDoneAt: true,
       artDoneByUser: { select: { id: true, name: true } },
+      postedManuallyAt: true,
+      postedByUser: { select: { id: true, name: true } },
       schedule: { select: { status: true } },
     },
   });
@@ -284,6 +289,8 @@ export async function loadDesignQueue(options: DesignQueueOptions = {}): Promise
       artSource,
       artDoneAt: p.artDoneAt,
       artDoneBy: p.artDoneByUser,
+      postedAt: p.postedManuallyAt,
+      postedBy: p.postedByUser,
       hasMedia,
       late,
       drive: null,

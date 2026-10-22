@@ -8,6 +8,7 @@ import { Popover } from "@/components/Popover";
 import { Toast, type ToastState } from "@/components/Toast";
 import { EmptyState, FormatBadge, StatusBadge } from "@/components/ui";
 import { Icon } from "@/components/Icons";
+import { toUserMessage } from "@/lib/user-facing-error";
 import { DesignBusyArea, useDesignNav } from "./DesignFilters";
 import { DrivePath, patchArt } from "./DesignQueue";
 import {
@@ -20,8 +21,11 @@ import {
   type UserRef,
 } from "./design-view";
 import {
+  applyPosted,
   ART_LABEL,
   buildCalendar,
+  canMarkPosted,
+  canUnmarkPosted,
   POST_LABEL,
   type ArtCell,
   type CalendarClient,
@@ -29,6 +33,7 @@ import {
   type CalendarDay,
   type CalendarMarker,
   type CalendarRow,
+  type PostedOverride,
   type PostState,
 } from "./design-calendar";
 
@@ -36,8 +41,42 @@ import {
  * Calendário do Design (?ver=calendario): grade cliente × dia como a planilha
  * "Controle de Gestão" e o Quadro de Produção. Cada post é um marcador de duas
  * metades (arte | postagem); o clique abre um painel com os detalhes, o arquivo
- * no Drive e "Marcar arte como feita" (PATCH /api/posts/[id]/art, otimista).
+ * no Drive, "Marcar arte como feita" (PATCH /api/posts/[id]/art) e "Marcar como
+ * postado" (PATCH /api/posts/[id]/posted: a equipe posta direto nas redes), otimistas.
  */
+
+const NETWORK_ERROR = "Não foi possível falar com o servidor. Verifique a conexão e tente de novo.";
+
+type PatchPostedResult =
+  | { ok: true; postedAt: string | null; postedBy: UserRef | null }
+  | { ok: false; message: string };
+
+/** Marca (posted=true) ou desmarca um post como postado. Nunca lança; erro vira frase pt-BR. */
+async function patchPosted(postId: string, posted: boolean): Promise<PatchPostedResult> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/posts/${postId}/posted`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ posted }),
+    });
+  } catch {
+    return { ok: false, message: NETWORK_ERROR };
+  }
+  const body: unknown = await res.json().catch(() => null);
+  const obj = body && typeof body === "object" ? (body as { error?: unknown; postedAt?: unknown; postedBy?: unknown }) : {};
+  if (!res.ok) {
+    if (res.status === 401) return { ok: false, message: "Sua sessão expirou. Entre de novo para continuar." };
+    const message = toUserMessage(typeof obj.error === "string" ? obj.error : undefined, "Tente de novo em instantes.");
+    return { ok: false, message: /[.!?…]$/.test(message.trim()) ? message.trim() : `${message.trim()}.` };
+  }
+  const by = obj.postedBy as { id?: unknown; name?: unknown } | null | undefined;
+  return {
+    ok: true,
+    postedAt: typeof obj.postedAt === "string" ? obj.postedAt : null,
+    postedBy: by && typeof by.id === "string" && typeof by.name === "string" ? { id: by.id, name: by.name } : null,
+  };
+}
 
 /* Mapas estáticos: o Tailwind só gera classes escritas por inteiro. */
 const ART_HALF: Record<ArtCell, string> = {
@@ -203,7 +242,7 @@ function CalendarLegend() {
             {(Object.keys(POST_LABEL) as PostState[]).map((p) => (
               <LegendItem key={p} sample={<HalfSample cls={POST_HALF[p]} glyph={POST_GLYPH[p]} />}>
                 {POST_LABEL[p]}
-                {p === "publicado" && " (verde da planilha: “Arte postada”)"}
+                {p === "publicado" && " (verde da planilha: “Arte postada”): clique no post e use “Marcar como postado”"}
                 {p === "aguardando" && " (amarelo da planilha)"}
               </LegendItem>
             ))}
@@ -279,11 +318,13 @@ function MarkerPanel({
   nowMs,
   busy,
   onToggle,
+  onPosted,
 }: {
   marker: CalendarMarker;
   nowMs: number;
   busy: boolean;
   onToggle: (row: DesignRow, done: boolean) => void;
+  onPosted: (row: DesignRow, posted: boolean) => void;
 }) {
   const row = marker.row;
   const w = whenParts(row.scheduledAt);
@@ -313,7 +354,16 @@ function MarkerPanel({
           )}
         </dd>
         <dt className={term}>Postagem</dt>
-        <dd className="text-sm text-fg">{POST_LABEL[marker.post]}</dd>
+        <dd className="text-sm text-fg">
+          {POST_LABEL[marker.post]}
+          {marker.post === "publicado" && row.postedAt && (
+            <span className="mt-0.5 block text-xs text-fg-muted">
+              {row.postedBy
+                ? `Marcado por ${row.postedBy.name} em ${doneWhenText(row.postedAt)}`
+                : `Marcado em ${doneWhenText(row.postedAt)}`}
+            </span>
+          )}
+        </dd>
         <dt className={term}>Redação</dt>
         <dd>
           <StatusBadge kind="stage" status={row.stage} />
@@ -321,8 +371,18 @@ function MarkerPanel({
       </dl>
       {row.drive && <DrivePath path={row.drive.path} />}
       <div className="flex flex-wrap gap-2">
+        {canMarkPosted(row) && (
+          <Button size="sm" variant="primary" leadingIcon={<Icon.send />} disabled={busy} onClick={() => onPosted(row, true)}>
+            Marcar como postado
+          </Button>
+        )}
+        {canUnmarkPosted(row) && (
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => onPosted(row, false)}>
+            Desmarcar postado
+          </Button>
+        )}
         {canMark && (
-          <Button size="sm" variant="primary" leadingIcon={<Icon.check />} disabled={busy} onClick={() => onToggle(row, true)}>
+          <Button size="sm" variant="secondary" leadingIcon={<Icon.check />} disabled={busy} onClick={() => onToggle(row, true)}>
             Marcar arte como feita
           </Button>
         )}
@@ -369,14 +429,18 @@ export default function DesignCalendar({
   // mesmas regras do otimismo da fila: com dados novos só ficam as mudanças em andamento
   const [overrides, setOverrides] = useState<ReadonlyMap<string, ArtOverride>>(() => new Map());
   const [inflight, setInflight] = useState<ReadonlySet<string>>(() => new Set());
+  const [postedOverrides, setPostedOverrides] = useState<ReadonlyMap<string, PostedOverride>>(() => new Map());
   const [seenRows, setSeenRows] = useState(rows);
   if (seenRows !== rows) {
     setSeenRows(rows);
     setOverrides(new Map([...overrides].filter(([id]) => inflight.has(id))));
+    setPostedOverrides(new Map([...postedOverrides].filter(([id]) => inflight.has(id))));
   }
   const [toast, setToast] = useState<ToastState>(null);
 
-  const effective = rows.map((r) => applyOverride(r, overrides.get(r.id), nowMs));
+  const effective = rows.map((r) =>
+    applyPosted(applyOverride(r, overrides.get(r.id), nowMs), postedOverrides.get(r.id), nowMs),
+  );
   const model = buildCalendar({ month, todayKey, clients, rows: effective });
   const markers = new Map<string, CalendarMarker>();
   for (const s of model.sections) for (const l of s.rows) for (const list of l.days.values()) for (const m of list) markers.set(m.row.id, m);
@@ -421,6 +485,40 @@ export default function DesignCalendar({
     }
     setOverrides((prev) => new Map(prev).set(row.id, { done, artDoneAt: result.artDoneAt, artDoneBy: result.artDoneBy }));
     setToast({ kind: "success", text: done ? "Arte marcada como feita." : "Arte marcada como não feita." });
+    startRefresh(() => router.refresh());
+  }
+
+  async function togglePosted(row: DesignRow, posted: boolean) {
+    if (inflight.has(row.id)) return;
+    const previous = postedOverrides.get(row.id);
+    setPostedOverrides((prev) =>
+      new Map(prev).set(row.id, { posted, postedAt: posted ? new Date().toISOString() : null, postedBy: posted ? me : null }),
+    );
+    setInflight((prev) => new Set(prev).add(row.id));
+    const result = await patchPosted(row.id, posted);
+    setInflight((prev) => {
+      const next = new Set(prev);
+      next.delete(row.id);
+      return next;
+    });
+    const theme = row.theme?.trim() || "Post sem tema";
+    if (!result.ok) {
+      setPostedOverrides((prev) => {
+        const next = new Map(prev);
+        if (previous) next.set(row.id, previous);
+        else next.delete(row.id);
+        return next;
+      });
+      setToast({
+        kind: "error",
+        text: `Não foi possível ${posted ? "marcar" : "desmarcar"} «${theme}» como postado. ${result.message}`,
+      });
+      return;
+    }
+    setPostedOverrides((prev) =>
+      new Map(prev).set(row.id, { posted, postedAt: result.postedAt, postedBy: result.postedBy }),
+    );
+    setToast({ kind: "success", text: posted ? "Post marcado como postado." : "Post desmarcado como postado." });
     startRefresh(() => router.refresh());
   }
 
@@ -585,6 +683,7 @@ export default function DesignCalendar({
             nowMs={nowMs}
             busy={inflight.has(openMarker.row.id)}
             onToggle={(r, d) => void toggle(r, d)}
+            onPosted={(r, p) => void togglePosted(r, p)}
           />
         )}
       </Popover>

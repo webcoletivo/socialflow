@@ -12,7 +12,7 @@ import { clientIp } from "@/lib/rate-limit";
  * - credential.reveal, credential.update
  * - user.create, user.role_change, user.password_change, user.delete
  * - client.delete, client.account_change, client.meta_link
- * - posts.bulk_delete, schedule.approve_internal
+ * - posts.bulk_delete, schedule.approve_internal, post.posted_manual, post.unposted_manual
  * - settings.ai_model, settings.openai_key
  * - tokens.refresh (só contagens), auth.login_blocked
  */

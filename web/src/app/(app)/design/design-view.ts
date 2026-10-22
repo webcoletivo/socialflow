@@ -67,6 +67,9 @@ export type DesignRow = {
   /** ISO */
   artDoneAt: string | null;
   artDoneBy: UserRef | null;
+  /** ISO: marcado como postado à mão (calendário); null = não (ou publicado pelo sistema) */
+  postedAt?: string | null;
+  postedBy?: UserRef | null;
   hasMedia: boolean;
   late: boolean;
   drive: { file: string; path: string } | null;

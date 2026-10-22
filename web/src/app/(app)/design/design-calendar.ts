@@ -10,7 +10,7 @@
  */
 import { contentKindLabel } from "../../../lib/content-packages.ts";
 import { formatMeta } from "../../../lib/formats.ts";
-import { whenParts, type DesignRow, type UserRef } from "./design-view.ts";
+import { isLateAt, whenParts, type DesignRow, type UserRef } from "./design-view.ts";
 
 export type CalendarClient = {
   id: string;
@@ -53,6 +53,41 @@ export function postStateOf(row: Pick<DesignRow, "status" | "stage">, withApprov
   if (row.status === "scheduled" || row.status === "publishing") return "agendado";
   if (withApproval && row.stage !== "post_aprovado") return "aguardando";
   return "a_postar";
+}
+
+/** Status em que a equipe pode marcar "postado" à mão (publishing = o sistema está publicando). */
+const POSTABLE = ["draft", "scheduled", "failed"];
+
+/** Pode marcar como postado? */
+export function canMarkPosted(row: Pick<DesignRow, "status">): boolean {
+  return POSTABLE.includes(row.status);
+}
+
+/** Pode desmarcar? Só o que foi marcado à mão (publicado pelo sistema não). */
+export function canUnmarkPosted(row: Pick<DesignRow, "status" | "postedAt">): boolean {
+  return row.status === "published" && !!row.postedAt;
+}
+
+/** Mudança otimista da postagem de um post (enquanto o servidor não devolve a lista nova). */
+export type PostedOverride = { posted: boolean; postedAt: string | null; postedBy: UserRef | null };
+
+/**
+ * O item com a marcação de postado aplicada. Postado = publicado, e publicado conta como arte
+ * feita (regra de `hasArt`); desmarcado volta a rascunho e a arte que só valia por estar
+ * publicada volta para "a fazer" (com o atraso recalculado).
+ */
+export function applyPosted(row: DesignRow, o: PostedOverride | undefined, nowMs: number): DesignRow {
+  if (!o) return row;
+  if (o.posted) {
+    const art =
+      row.artStatus === "a_fazer" ? { artStatus: "feita" as const, artSource: "publicado" as const, late: false } : {};
+    return { ...row, status: "published", postedAt: o.postedAt, postedBy: o.postedBy, ...art };
+  }
+  const art =
+    row.artSource === "publicado"
+      ? { artStatus: "a_fazer" as const, artSource: null, late: isLateAt(row.scheduledAt, nowMs) }
+      : {};
+  return { ...row, status: "draft", postedAt: null, postedBy: null, ...art };
 }
 
 export type CalendarMarker = {

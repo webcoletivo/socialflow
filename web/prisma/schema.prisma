@@ -24,6 +24,8 @@ model User {
   // designer responsável (carteira) e artes que a usuária marcou como feitas
   designedClients         Client[]      @relation("ClientDesigner")
   artDonePosts            Post[]        @relation("PostArtDoneBy")
+  // posts que a usuária marcou como postados à mão
+  postedPosts             Post[]        @relation("PostPostedBy")
   // configurações do sistema que a usuária salvou por último (ex.: modelo de IA de texto)
   updatedSettings         AppSetting[]  @relation("AppSettingUpdatedBy")
   // trilha de auditoria: ações sensíveis feitas pela usuária
@@ -194,6 +196,10 @@ model Post {
   artDoneAt    DateTime? @map("art_done_at") @db.Timestamptz(6)
   // quem marcou a arte como feita (users.id)
   artDoneBy    String?   @map("art_done_by") @db.Uuid
+  // postado nas redes pela equipe e marcado à mão no calendário do Design (status vira "published")
+  postedManuallyAt DateTime? @map("posted_manually_at") @db.Timestamptz(6)
+  // quem marcou como postado (users.id)
+  postedBy     String?   @map("posted_by") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -201,6 +207,7 @@ model Post {
   weeklyReview WeeklyReview? @relation(fields: [weeklyReviewId], references: [id], onDelete: SetNull)
   writer       User?         @relation("PostWriter", fields: [writerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   artDoneByUser User?        @relation("PostArtDoneBy", fields: [artDoneBy], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  postedByUser User?         @relation("PostPostedBy", fields: [postedBy], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_posts_posted_by")
   publications Publication[]
   adjustments  PostAdjustment[]
   pendingItems PendingItem[]

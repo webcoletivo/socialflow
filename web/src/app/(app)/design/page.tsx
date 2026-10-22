@@ -67,6 +67,8 @@ function toRow(item: DesignQueueResult["items"][number]): DesignRow {
     artSource: item.artSource,
     artDoneAt: item.artDoneAt ? item.artDoneAt.toISOString() : null,
     artDoneBy: item.artDoneBy,
+    postedAt: item.postedAt ? item.postedAt.toISOString() : null,
+    postedBy: item.postedBy,
     hasMedia: item.hasMedia,
     late: item.late,
     drive: item.drive ? { file: item.drive.file, path: item.drive.path } : null,

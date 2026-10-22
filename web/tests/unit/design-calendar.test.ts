@@ -9,8 +9,11 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyPosted,
   artCellOf,
   buildCalendar,
+  canMarkPosted,
+  canUnmarkPosted,
   monthDays,
   postStateOf,
   type CalendarClient,
@@ -157,5 +160,51 @@ describe("design-calendar: buildCalendar", () => {
     const m = buildCalendar({ month: "2026-10", todayKey: "2026-10-21", clients: clients.filter((c) => !c.withApproval), rows: [] });
     assert.deepEqual(m.sections.map((s) => s.key), ["sem_aprovacao"]);
     assert.equal(m.counts.total, 0);
+  });
+});
+
+describe("design-calendar: marcar como postado (à mão)", () => {
+  const NOW = Date.parse("2026-10-21T12:00:00-03:00");
+  const ANA = { id: "u1", name: "ZZ QA Ana" };
+
+  test("quem pode marcar e desmarcar", () => {
+    for (const status of ["draft", "scheduled", "failed"]) assert.equal(canMarkPosted({ status }), true);
+    for (const status of ["publishing", "published"]) assert.equal(canMarkPosted({ status }), false);
+    assert.equal(canUnmarkPosted({ status: "published", postedAt: "2026-10-21T15:00:00.000Z" }), true);
+    assert.equal(canUnmarkPosted({ status: "published", postedAt: null }), false); // pelo sistema
+    assert.equal(canUnmarkPosted({ status: "draft", postedAt: "2026-10-21T15:00:00.000Z" }), false);
+  });
+
+  test("marcar: vira publicado (postado) e a arte a fazer passa a contar como feita", () => {
+    const base = row({ id: "p", scheduledAt: sp("2026-10-21T18:00:00"), late: true });
+    const r = applyPosted(base, { posted: true, postedAt: "2026-10-21T15:00:00.000Z", postedBy: ANA }, NOW);
+    assert.deepEqual(
+      [r.status, r.postedAt, r.postedBy, r.artStatus, r.artSource, r.late],
+      ["published", "2026-10-21T15:00:00.000Z", ANA, "feita", "publicado", false],
+    );
+    assert.equal(postStateOf(r, true), "publicado");
+    // arte já marcada continua "marcada"
+    const done = row({ id: "q", scheduledAt: sp("2026-10-21T18:00:00"), artStatus: "feita", artSource: "marcada" });
+    assert.equal(applyPosted(done, { posted: true, postedAt: null, postedBy: null }, NOW).artSource, "marcada");
+  });
+
+  test("desmarcar: volta a rascunho; arte que valia só por estar publicada volta a fazer (atraso recalculado)", () => {
+    const pub = row({
+      id: "p",
+      scheduledAt: sp("2026-10-21T18:00:00"),
+      status: "published",
+      artStatus: "feita",
+      artSource: "publicado",
+      postedAt: "2026-10-21T15:00:00.000Z",
+      postedBy: ANA,
+    });
+    const r = applyPosted(pub, { posted: false, postedAt: null, postedBy: null }, NOW);
+    assert.deepEqual(
+      [r.status, r.postedAt, r.postedBy, r.artStatus, r.artSource, r.late],
+      ["draft", null, null, "a_fazer", null, true],
+    );
+    const media = { ...pub, artSource: "midia" as const, hasMedia: true };
+    assert.equal(applyPosted(media, { posted: false, postedAt: null, postedBy: null }, NOW).artStatus, "feita");
+    assert.equal(applyPosted(pub, undefined, NOW), pub);
   });
 });
