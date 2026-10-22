@@ -57,7 +57,16 @@ function loadServiceAccount(): ServiceAccount {
     const nodePath: typeof import("path") = _require("path");
     const nodeFs: typeof import("fs") = _require("fs");
     const file = nodePath.resolve(process.cwd(), rel);
-    raw = nodeFs.readFileSync(file, "utf8");
+    try {
+      raw = nodeFs.readFileSync(file, "utf8");
+    } catch (e) {
+      // o caminho do servidor fica só no log; a tela recebe "Drive não configurado" (user-facing-error)
+      console.error("[drive] arquivo da service account ilegível:", file, e instanceof Error ? e.message : e);
+      throw new Error(
+        "Arquivo da service account não encontrado (GOOGLE_SERVICE_ACCOUNT_FILE). " +
+        "Em produção, defina GOOGLE_SERVICE_ACCOUNT_JSON."
+      );
+    }
   }
 
   const json = JSON.parse(raw);
